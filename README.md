@@ -34,6 +34,40 @@ open build/iEdge.app
 Permissões (Gravação de Tela, Acessibilidade) e "abrir ao iniciar sessão" só se comportam direito
 a partir do `.app`.
 
+## Ajustes
+
+O ícone `sidebar.squares.left` fica na barra de menus (meio apagado quando o iEdge está pausado).
+**Clique** abre os Ajustes num painel de vidro logo abaixo dele; Esc ou um clique fora fecha.
+**Clique direito** abre o menu rápido: Pausar/Retomar, Mostrar barra esquerda, Mostrar barra direita,
+Ajustes…, Sair. Tudo salva na hora, sem botão Salvar.
+
+| Aba | O que tem |
+| --- | --- |
+| **Itens** | Os itens da barra, na ordem: interruptor para cada um, arrastar (ou ↑↓ ao passar o cursor) para reordenar. **Adicionar atalho** abre um formulário: App (escolhido em /Applications, o nome vem do app), Link (endereço, domínio ou caminho `~/…`), Atalho (do app Atalhos, com a lista dos seus) ou Comando (`/bin/zsh -lc`), com nome e símbolo SF com prévia. Os atalhos criados podem ser editados e removidos; os embutidos só desligam. **Restaurar padrão** volta os embutidos à ordem original, ligados, e mantém os seus atalhos no fim, desligados. |
+| **Bordas** | Borda esquerda e direita (com aviso quando o Dock está naquele lado e a opção de abrir mesmo assim), tempo na borda, empurrão, ampliação, tamanho dos itens, nome do item, toque no trackpad e os botões **Testar à esquerda/direita**. |
+| **Capturas** | Destino (Arquivo, Clipboard ou Ambos), pasta (escolher uma ou usar a do sistema), som, prévia e o estado da permissão de Gravação de Tela. |
+| **Clipboard** | Guardar o histórico, tamanho (20–200), colar automaticamente, apps excluídos (gerenciadores de senha por padrão) e **Limpar histórico** (as fixadas ficam). |
+| **Geral** | Abrir ao iniciar sessão, pausar, permissões, versão e Sair. |
+
+## Permissões
+
+O iEdge pede só o que cada função precisa, e funciona sem elas (a função correspondente fica de fora).
+Os Ajustes mostram o estado de cada uma e releem enquanto estão abertos, então dá para conceder nos
+Ajustes do Sistema e voltar.
+
+| Permissão | O que libera | Como conceder |
+| --- | --- | --- |
+| **Gravação de Tela** | Capturas de tela inteira, área e janela. | Ajustes › Capturas ou Geral › **Conceder**. Na primeira vez o macOS mostra o pedido; depois o botão vira **Abrir Ajustes** e leva a Ajustes do Sistema › Privacidade e Segurança › Gravação de Tela e Áudio do Sistema. Ligue o iEdge e reabra o app se o macOS pedir. |
+| **Acessibilidade** | Colar automaticamente (⌘V no app da frente) ao escolher uma entrada do clipboard. | Ao ligar **Colar automaticamente**, ou em Geral › **Conceder**. Leva a Privacidade e Segurança › Acessibilidade; ligue o iEdge. |
+
+Detectar a borda não pede permissão nenhuma (eventos de movimento do mouse não precisam de
+Acessibilidade). **Abrir ao iniciar sessão** usa `SMAppService` e só funciona com o `iEdge.app` em
+/Applications; fora disso os Ajustes dizem o que fazer. Se você desligar o iEdge em Ajustes do Sistema ›
+Geral › Itens de Início, os Ajustes mostram isso com um botão para reabrir esse painel.
+
+Como o `.app` é assinado ad-hoc, cada novo build pode ser visto pelo macOS como outro app: se uma
+permissão concedida "sumir" depois de recompilar, remova o iEdge da lista e conceda de novo.
+
 ## Flags de desenvolvimento
 
 | Flag | Efeito |
