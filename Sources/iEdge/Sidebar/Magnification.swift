@@ -8,9 +8,17 @@ import Foundation
 /// tiles sit `padding` from the capsule, `spacing` apart. With a cursor, each tile scales by
 /// `1 + (m - 1) · exp(-d² / 2σ²)` (d = distance from the cursor to the tile's resting centre,
 /// σ = 1.2 × tileSize), and the scaled tiles push their neighbours apart. The stack is then shifted
-/// so the spot under the cursor stays under it, which keeps the magnified tile in place while
-/// the others make room above and below.
+/// by its `Anchor`: `.cursor` keeps the spot under the cursor under it (the magnified tile stays
+/// in place while the others make room above and below); `.center` keeps the stack centred on the
+/// resting capsule, so a glass of `totalHeight` with a fixed centre holds every tile, like the Dock.
 struct Magnification: Equatable {
+    enum Anchor: Equatable {
+        /// The spot under the cursor stays under it.
+        case cursor
+        /// The stack grows equally above and below the resting capsule's centre (the sidebar).
+        case center
+    }
+
     struct Tile: Equatable {
         /// Centre of the tile, from the capsule's top.
         var centerY: CGFloat
@@ -24,6 +32,7 @@ struct Magnification: Equatable {
     /// capsule height without a cursor; larger while magnifying).
     var totalHeight: CGFloat
     /// Top of that span relative to the capsule's top (negative when tiles overflow upwards).
+    /// With `.center`, the glass that follows the stack spans `top ..< top + totalHeight`.
     var top: CGFloat
     /// Tile nearest to the cursor while the cursor is over the stack.
     var selectedIndex: Int?
@@ -40,7 +49,8 @@ struct Magnification: Equatable {
         cursorY: CGFloat?,
         spacing: CGFloat = Theme.tileSpacing,
         padding: CGFloat = Theme.sidebarPadding,
-        selectionSlack: CGFloat = Theme.tileSpacing
+        selectionSlack: CGFloat = Theme.tileSpacing,
+        anchor: Anchor = .cursor
     ) {
         let count = max(count, 0)
         let pitch = tileSize + spacing
@@ -85,7 +95,11 @@ struct Magnification: Equatable {
         } else {
             mapped = cursorY
         }
-        let shift = cursorY - mapped
+        let shift: CGFloat
+        switch anchor {
+        case .cursor: shift = cursorY - mapped
+        case .center: shift = (restHeight - height) / 2
+        }
 
         tiles = (0..<count).map { Tile(centerY: centers[$0] + shift, scale: scales[$0], size: sizes[$0]) }
         totalHeight = height

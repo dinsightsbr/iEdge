@@ -36,12 +36,7 @@ struct SidebarView: View {
         let current = settings.settings
         let items = current.enabledItems
         let tileSize = current.tileSize
-        let magnification = Magnification(
-            count: items.count,
-            tileSize: tileSize,
-            magnification: current.magnification,
-            cursorY: model.cursorY
-        )
+        let magnification = SidebarView.layout(settings: current, cursorY: model.cursorY)
         let glassSize = SidebarView.glassSize(itemCount: items.count, tileSize: tileSize)
         let origin = model.canvas.glassOrigin
         let edge = model.edge
@@ -49,13 +44,12 @@ struct SidebarView: View {
         let selectedIndex = magnification.selectedIndex ?? model.heldSelection
 
         ZStack(alignment: .topLeading) {
-            if isSnapshot {
-                // Glass does not render in snapshots; a gray capsule stands in for it.
-                RoundedRectangle(cornerRadius: Theme.sidebarRadius, style: .continuous)
-                    .fill(SidebarView.snapshotGlass)
-                    .frame(width: glassSize.width, height: glassSize.height)
-                    .offset(x: origin.x, y: origin.y)
-            }
+            // The capsule follows the magnified stack, its centre fixed (like the Dock). It is a
+            // frame of fixed width and animatable height, so it moves with the tiles in the same
+            // transaction (and eases with them when the cursor enters or leaves).
+            SidebarCapsule()
+                .frame(width: glassSize.width, height: magnification.totalHeight)
+                .offset(x: origin.x, y: origin.y + magnification.top)
 
             ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                 let tile = magnification.tiles[index]
@@ -93,6 +87,24 @@ struct SidebarView: View {
     static var snapshotGlass: Color { Color.gray.opacity(0.22) }
 
     // MARK: Layout (shared with the controller, which positions the window and the anchors)
+
+    /// The magnifier as the sidebar draws it: centred on the resting capsule, which grows with it.
+    static func layout(settings: AppSettings, cursorY: CGFloat?, selectionSlack: CGFloat = Theme.tileSpacing) -> Magnification {
+        Magnification(
+            count: settings.enabledItems.count,
+            tileSize: settings.tileSize,
+            magnification: settings.magnification,
+            cursorY: cursorY,
+            selectionSlack: selectionSlack,
+            anchor: .center
+        )
+    }
+
+    /// The capsule for a layout, in screen coordinates (y up), from the resting `glass`: same
+    /// width and centre, the height of the magnified stack.
+    static func capsuleRect(_ layout: Magnification, glass: CGRect) -> CGRect {
+        CGRect(x: glass.minX, y: glass.maxY - layout.top - layout.totalHeight, width: glass.width, height: layout.totalHeight)
+    }
 
     static func glassSize(itemCount: Int, tileSize: CGFloat) -> CGSize {
         CGSize(
@@ -176,6 +188,23 @@ struct SidebarTile: View {
             Image(systemName: item.symbol)
                 .font(.system(size: Theme.tileSymbolSize * size / 44, weight: .semibold))
                 .foregroundStyle(selected ? Color.white : Color.primary)
+        }
+    }
+}
+
+/// The sidebar's glass capsule (Liquid Glass on macOS 26, a material before; a gray stand-in in
+/// snapshots, where glass does not render). Purely decorative: the overlay takes the clicks.
+private struct SidebarCapsule: View {
+    @Environment(\.isSnapshot) private var isSnapshot
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: Theme.sidebarRadius, style: .continuous)
+        if isSnapshot {
+            shape.fill(SidebarView.snapshotGlass)
+        } else if #available(macOS 26.0, *) {
+            Color.clear.glassEffect(.regular, in: shape)
+        } else {
+            Color.clear.background(.regularMaterial, in: shape)
         }
     }
 }

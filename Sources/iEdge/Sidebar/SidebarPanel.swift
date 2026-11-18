@@ -5,17 +5,19 @@ import SwiftUI
 /// Glass capsule window of the sidebar: non-activating (the frontmost app stays active, so paste
 /// and captures act on it), above normal windows, on every Space and over full-screen apps.
 ///
-/// The glass itself stays empty. The tiles and the label are drawn by `SidebarOverlayView`, a
-/// sibling above the glass that covers the whole window, because magnified tiles and the label
-/// spill past the capsule (the glass content is clipped to its shape). One panel per edge, since
-/// the room for that spill is on the side facing into the screen.
+/// The panel draws no glass of its own (`drawsGlass: false`): the capsule, the tiles and the label
+/// are all drawn by `SidebarOverlayView`, which covers the whole window, because the capsule
+/// grows with the magnifier and the magnified tiles and the label spill past it. The window has
+/// room for the largest stack from the start, so only the drawing changes while magnifying. One
+/// panel per edge, since the room for that spill is on the side facing into the screen.
 final class SidebarPanel: GlassPanel {
     /// Room past the capsule into the screen: magnified tiles (up to (2 − 1) × 56 − 10 pt) and the
     /// label next to them.
     static let inwardMargin: CGFloat = 270
     /// Room towards the screen edge, for the glass shadow.
     static let outwardMargin: CGFloat = 24
-    /// Room above and below, for the stack growing while magnified (see `Magnification.maxOverflow`).
+    /// Room above and below, for the capsule growing with the magnified stack (half of
+    /// `Magnification.maxOverflow` on each side) and its shadow.
     static let verticalMargin: CGFloat = 130
 
     static let configuration = configuration(for: .left)
@@ -31,7 +33,10 @@ final class SidebarPanel: GlassPanel {
             ),
             level: .statusBar,
             collectionBehavior: [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle],
-            canBecomeKey: false
+            canBecomeKey: false,
+            // SidebarView draws the capsule so it follows the magnifier with the tiles, in the
+            // same frame and animation, without resizing the window.
+            drawsGlass: false
         )
     }
 

@@ -233,7 +233,7 @@ import SwiftUI
         }
 
         var magnifierY = cursorY
-        let layout = Magnification(count: current.enabledItems.count, tileSize: current.tileSize, magnification: current.magnification, cursorY: cursorY)
+        let layout = SidebarView.layout(settings: current, cursorY: cursorY)
         if flyout != nil, let index = layout.selectedIndex, current.enabledItems[index].kind == .clipboard {
             // Back on the clipboard tile with the flyout open: keep resting under the flyout.
             magnifierY = nil
@@ -378,13 +378,12 @@ import SwiftUI
     private func isInteractive(_ point: NSPoint, in panel: SidebarPanel) -> Bool {
         guard panel.isVisible, !isClosing else { return false }
         let screenPoint = NSPoint(x: point.x + panel.frame.minX, y: point.y + panel.frame.minY)
-        if panel.glassFrame.contains(screenPoint) { return true }
+        if SidebarView.capsuleRect(currentLayout(), glass: panel.glassFrame).contains(screenPoint) { return true }
         return currentTileRects(panel: panel).contains { $0.contains(screenPoint) }
     }
 
     private func currentLayout() -> Magnification {
-        let current = settings.settings
-        return Magnification(count: current.enabledItems.count, tileSize: current.tileSize, magnification: current.magnification, cursorY: model.cursorY)
+        SidebarView.layout(settings: settings.settings, cursorY: model.cursorY)
     }
 
     private func currentTileRects(panel: SidebarPanel) -> [CGRect] {
@@ -392,12 +391,14 @@ import SwiftUI
         return currentLayout().tiles.map { SidebarView.tileRect($0, glass: panel.glassFrame, tileSize: tileSize, edge: edge) }
     }
 
-    /// The glass with the magnified tiles and the label, in screen coordinates.
+    /// The capsule (grown with the magnifier) with the magnified tiles and the label, in screen
+    /// coordinates.
     private func sidebarDrawnRect(panel: SidebarPanel) -> CGRect {
-        let tiles = currentTileRects(panel: panel)
-        var rect = tiles.reduce(panel.glassFrame) { $0.union($1) }
-        let items = settings.settings.enabledItems
         let layout = currentLayout()
+        let tileSize = settings.settings.tileSize
+        let tiles = layout.tiles.map { SidebarView.tileRect($0, glass: panel.glassFrame, tileSize: tileSize, edge: edge) }
+        var rect = tiles.reduce(SidebarView.capsuleRect(layout, glass: panel.glassFrame)) { $0.union($1) }
+        let items = settings.settings.enabledItems
         if settings.settings.showLabels, model.showsLabel,
            let index = layout.selectedIndex, items.indices.contains(index), tiles.indices.contains(index) {
             let tile = tiles[index]
