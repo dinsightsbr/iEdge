@@ -1,21 +1,34 @@
 import AppKit
 
-// Peça B: executar de verdade (docs/SPEC.md §1.4 e §1.5): capturas via ScreenshotService
-// (screencapture com argumentos em array, destino, som, permissão, prévia CaptureToast),
-// Ferramenta de captura, e os atalhos personalizados em CustomActions (abrir app, link/arquivo,
-// app Atalhos, comando). Falha vira aviso curto, nunca alerta modal.
-
-/// Runs sidebar items. The sidebar is already closed when `perform` is called.
+/// Runs sidebar items (docs/SPEC.md §1.4, §1.5). The sidebar is already closed when `perform` is
+/// called, so captures never include it.
 @MainActor final class ActionRunner: ActionPerforming {
     private let settings: SettingsStore
     private let clipboard: ClipboardStore
+    /// Capture previews and failure notices share one card.
+    let toast = CaptureToastController()
+    private let screenshots: ScreenshotService
+    private let custom: CustomActions
 
     init(settings: SettingsStore, clipboard: ClipboardStore) {
         self.settings = settings
         self.clipboard = clipboard
+        self.screenshots = ScreenshotService(settings: settings, toast: toast)
+        self.custom = CustomActions(toast: toast)
     }
 
     func perform(_ item: SidebarItem, context: ActionContext) {
-        Log.actions.info("perform \(item.title, privacy: .public) [\(item.kind.kindTitle, privacy: .public)] na borda \(context.edge.rawValue, privacy: .public) (ainda não executa)")
+        Log.actions.info("perform \(item.kind.kindTitle, privacy: .public) na borda \(context.edge.rawValue, privacy: .public)")
+        switch item.kind {
+        case .screenshotFull, .screenshotArea, .screenshotWindow:
+            screenshots.capture(item.kind, context: context)
+        case .captureTool:
+            screenshots.openCaptureTool(context: context)
+        case .clipboard:
+            // The sidebar opens the flyout itself; nothing to run here.
+            break
+        case .openApp, .openURL, .shortcut, .shell:
+            custom.run(item, context: context)
+        }
     }
 }
