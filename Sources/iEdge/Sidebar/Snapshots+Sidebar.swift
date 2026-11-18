@@ -79,7 +79,7 @@ private extension VerticalAlignment {
         let count = current.enabledItems.count
         let glass = SidebarView.glassSize(itemCount: count, tileSize: current.tileSize)
         let cursorY = hover.map { CGFloat($0) * glass.height }
-        let layout = Magnification(count: count, tileSize: current.tileSize, magnification: current.magnification, cursorY: cursorY)
+        let layout = SidebarView.layout(settings: current, cursorY: cursorY)
         let above = max(0, -layout.top)
         let below = max(0, layout.top + layout.totalHeight - glass.height)
         let maxScale = layout.tiles.map(\.scale).max() ?? 1

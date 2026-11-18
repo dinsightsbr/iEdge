@@ -18,6 +18,10 @@ class GlassPanel: NSPanel {
         /// Settings needs key status for text fields; the sidebar must never take it from the
         /// frontmost app (paste and captures act on that app).
         var canBecomeKey = true
+        /// False when the owner draws the glass itself (the sidebar, whose capsule follows the
+        /// magnifier inside a window of fixed size). The margins and the click-outside test still
+        /// use the resting glass rectangle.
+        var drawsGlass = true
 
         /// Settings under the menu-bar icon (the iSessions StatusPanel).
         static let settings = Configuration(
@@ -50,7 +54,7 @@ class GlassPanel: NSPanel {
         hidesOnDeactivate = false
         animationBehavior = .none
 
-        let container = MarginView(content: content, radius: configuration.radius, margins: configuration.margins)
+        let container = MarginView(content: content, radius: configuration.radius, margins: configuration.margins, drawsGlass: configuration.drawsGlass)
         container.onOutsideClick = { [weak self] in self?.onDismiss?() }
         contentView = container
         // The glass and SwiftUI give this window an Auto Layout engine. Left to the autoresizing
@@ -138,8 +142,10 @@ private final class MarginView: NSView {
     private let clip: NSView
     var onOutsideClick: (() -> Void)?
 
-    init(content: NSView, radius: CGFloat, margins: NSEdgeInsets) {
-        self.glass = Self.glass(radius: radius)
+    init(content: NSView, radius: CGFloat, margins: NSEdgeInsets, drawsGlass: Bool = true) {
+        // Without glass, an empty view keeps the resting glass rectangle for the layout and the
+        // click-outside test.
+        self.glass = drawsGlass ? Self.glass(radius: radius) : NSView(frame: .zero)
         self.clip = NSView(frame: .zero)
         super.init(frame: NSRect(x: 0, y: 0, width: 380 + margins.left + margins.right, height: 320 + margins.top + margins.bottom))
         clip.wantsLayer = true
