@@ -93,6 +93,8 @@ enum ScreenshotCommand {
     func capture(_ kind: ActionKind, context: ActionContext) {
         guard !isCapturing else { return }
         guard ensurePermission(context: context) else { return }
+        // The preview of the previous capture stays 3 s; it must not end up in this one.
+        toast.dismiss(animated: false)
 
         let mode: ScreenshotMode
         switch kind {

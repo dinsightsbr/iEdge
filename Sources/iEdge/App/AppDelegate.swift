@@ -32,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             sidebar?.show(edge: edge, on: screen, atY: y)
         }
         let statusController = StatusItemController(settings: settings, sidebar: sidebar, clipboard: clipboard)
+        actions.willCapture = { [weak statusController] in statusController?.closeSettings(animated: false) }
 
         self.settings = settings
         self.clipboard = clipboard

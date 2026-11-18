@@ -260,8 +260,52 @@ final class ClipboardStorePersistenceTests: XCTestCase {
         let store = ClipboardStore(settings: settings, storage: storage)
         XCTAssertEqual(store.entries.count, 30)
         settings.settings.clipboard.maxEntries = 20
+        store.flushTrim()
         XCTAssertEqual(store.entries.count, 20)
         XCTAssertEqual(store.entries.first?.summary, "0")
+    }
+
+    /// Dragging the "Tamanho" slider down and back up must not evict anything.
+    func testMaxEntriesDraggedThroughLowValuesKeepsEntries() throws {
+        let entries = (0..<30).map { ClipboardEntry(content: .text("\($0)"), date: Date().addingTimeInterval(Double(-$0))) }
+        try savedFile(entries: entries)
+        let settings = SettingsStore(demo: true)
+        let store = ClipboardStore(settings: settings, storage: storage)
+        for value in [40, 30, 20, 30, 50] { settings.settings.clipboard.maxEntries = value }
+        store.flushTrim()
+        XCTAssertEqual(store.entries.count, 30)
+
+        let settled = expectation(description: "trim after the value settles")
+        settings.settings.clipboard.maxEntries = 20
+        XCTAssertEqual(store.entries.count, 30)
+        DispatchQueue.main.asyncAfter(deadline: .now() + ClipboardStore.trimDelay + 0.2) { settled.fulfill() }
+        wait(for: [settled], timeout: ClipboardStore.trimDelay + 2)
+        XCTAssertEqual(store.entries.count, 20)
+    }
+
+    func testUnreadableFileIsBackedUpAndImagesKept() throws {
+        let image = try writeImage("kept.png")
+        try Data("{ not json".utf8).write(to: storage.file)
+
+        let store = ClipboardStore(settings: SettingsStore(demo: true), storage: storage)
+        XCTAssertTrue(store.entries.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: image))
+        let backup = storage.file.appendingPathExtension("corrompido")
+        XCTAssertEqual(try Data(contentsOf: backup), Data("{ not json".utf8))
+    }
+
+    /// An image path in clipboard.json outside clipboard/ is never deleted.
+    func testEvictionNeverDeletesFilesOutsideImagesFolder() throws {
+        let outside = directory.appendingPathComponent("importante.txt")
+        try Data("x".utf8).write(to: outside)
+        let entry = ClipboardEntry(content: .image(path: outside.path, thumbnailPath: nil, width: 1, height: 1, byteCount: 1), date: Date())
+        try savedFile(entries: [entry])
+
+        let store = ClipboardStore(settings: SettingsStore(demo: true), storage: storage)
+        XCTAssertEqual(store.entries.count, 1)
+        store.clear()
+        XCTAssertTrue(store.entries.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outside.path))
     }
 
     func testImageFilesStorePNGThumbnailAndDedup() throws {
