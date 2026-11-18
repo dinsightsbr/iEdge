@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 /// Shows the sidebar on an edge, runs the magnifier while it is visible and runs the clicked item
@@ -24,6 +25,9 @@ import SwiftUI
     private var clipboardHoverStart: Double?
     /// When the cursor went more than 40 pt away from the glass (the sidebar closes after 250 ms).
     private var farSince: Double?
+    /// Item count and tile size the open sidebar was laid out for.
+    private var layoutKey: SidebarLayoutKey?
+    private var settingsObserver: AnyCancellable?
 
     private(set) var edge: ScreenEdge = .left
     private(set) var screen: NSScreen?
@@ -43,6 +47,12 @@ import SwiftUI
         self.settings = settings
         self.clipboard = clipboard
         self.actions = actions
+        // The view redraws with new settings at once; the window and the glass anchor must follow
+        // when the items or their size change while the sidebar is open (pinned, or the Settings
+        // "Testar" buttons). `$settings` publishes before the change, so the new value is passed on.
+        settingsObserver = settings.$settings.sink { [weak self] new in
+            MainActor.assumeIsolated { self?.settingsWillChange(to: new) }
+        }
     }
 
     // MARK: Show and hide
@@ -60,8 +70,9 @@ import SwiftUI
         let panel = panel(for: edge)
         self.panel = panel
         let current = settings.settings
-        let glass = glassRect(edge: edge, screen: screen, centerY: y)
+        let glass = glassRect(edge: edge, screen: screen, centerY: y, settings: current)
         panel.setGlassFrame(glass, display: false)
+        layoutKey = SidebarLayoutKey(current)
 
         model.edge = edge
         model.canvas = SidebarCanvas(size: panel.frame.size, glassOrigin: panel.glassOriginInCanvas)
@@ -86,7 +97,10 @@ import SwiftUI
             let margins = panel.margins
             let pivot = CGPoint(x: edge == .left ? margins.left : margins.left + glass.width, y: margins.bottom + glass.height / 2)
             let away = glass.width + Theme.sidebarEdgeGap
-            SidebarAnimation.springIn(view, pivot: pivot, offset: CGVector(dx: edge == .left ? -away : away, dy: 0), scale: 0.92)
+            SidebarAnimation.springIn(
+                view, pivot: pivot, offset: CGVector(dx: edge == .left ? -away : away, dy: 0), scale: 0.92,
+                damping: SidebarAnimation.damping(forOvershoot: SidebarAnimation.entryOvershoot, travel: away)
+            )
         }
         // Next turn of the run loop, so the hidden state is drawn before the cascade starts.
         let token = generation
@@ -410,8 +424,22 @@ import SwiftUI
         return rect
     }
 
-    private func glassRect(edge: ScreenEdge, screen: NSScreen, centerY: CGFloat) -> CGRect {
-        let size = SidebarView.glassSize(itemCount: settings.settings.enabledItems.count, tileSize: settings.settings.tileSize)
+    /// Re-lays the open sidebar out around the same centre when the items or the tile size change.
+    private func settingsWillChange(to new: AppSettings) {
+        let key = SidebarLayoutKey(new)
+        guard key != layoutKey, let panel, let screen, panel.isVisible, !isClosing else { return }
+        layoutKey = key
+        hideFlyout()
+        selectedIndex = nil
+        clipboardHoverStart = nil
+        let glass = glassRect(edge: edge, screen: screen, centerY: panel.glassFrame.midY, settings: new)
+        panel.setGlassFrame(glass, display: false)
+        model.canvas = SidebarCanvas(size: panel.frame.size, glassOrigin: panel.glassOriginInCanvas)
+        model.cascadeOrigin = min(model.cascadeOrigin, max(new.enabledItems.count - 1, 0))
+    }
+
+    private func glassRect(edge: ScreenEdge, screen: NSScreen, centerY: CGFloat, settings: AppSettings) -> CGRect {
+        let size = SidebarView.glassSize(itemCount: settings.enabledItems.count, tileSize: settings.tileSize)
         let frame = screen.frame
         let visible = screen.visibleFrame
         let x = edge == .left ? frame.minX + Theme.sidebarEdgeGap : frame.maxX - Theme.sidebarEdgeGap - size.width
@@ -435,6 +463,17 @@ import SwiftUI
     private func tileRect(index: Int) -> CGRect? {
         guard let panel else { return nil }
         return SidebarView.tileRect(index: index, glass: panel.glassFrame, tileSize: settings.settings.tileSize)
+    }
+}
+
+/// What the sidebar window's size depends on.
+struct SidebarLayoutKey: Equatable {
+    var itemCount: Int
+    var tileSize: Double
+
+    init(_ settings: AppSettings) {
+        itemCount = settings.enabledItems.count
+        tileSize = settings.tileSize
     }
 }
 
