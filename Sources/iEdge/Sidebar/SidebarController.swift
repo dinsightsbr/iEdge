@@ -1,20 +1,29 @@
 import AppKit
 import SwiftUI
 
-// Peça A: salto com mola ao abrir e saída ease-in ao fechar, display link da lupa só com a barra
-// visível (usar `simulatedHover` quando definido), seleção pelo cursor com folga, háptico,
-// fechar ao afastar 40 pt (250 ms de tolerância), flyout que abre após 250 ms parado no tile e
-// salta do tile (ClipboardFlyout). Hoje: abre/fecha seco, fecha com clique fora.
-
-/// Shows the sidebar on an edge and runs the clicked item.
+/// Shows the sidebar on an edge, runs the magnifier while it is visible and runs the clicked item
+/// (docs/SPEC.md §1.2–1.3).
 @MainActor final class SidebarController {
     private let settings: SettingsStore
     private let clipboard: ClipboardStore
     private let actions: ActionPerforming
 
-    private let panel: SidebarPanel
-    private var flyout: GlassPanel?
+    private let model = SidebarModel()
+    private var panels: [ScreenEdge: SidebarPanel] = [:]
+    private var panel: SidebarPanel?
+    private var flyout: ClipboardFlyout?
     private var clickMonitor: Any?
+    private var displayLink: CADisplayLink?
+    private lazy var ticker = SidebarTicker { [weak self] in self?.tick() }
+
+    /// Bumped on every show and hide, so a finished exit animation does not hide a newer show.
+    private var generation = 0
+    private var isClosing = false
+    private var selectedIndex: Int?
+    /// When the cursor settled on the clipboard tile (the flyout opens after 250 ms).
+    private var clipboardHoverStart: Double?
+    /// When the cursor went more than 40 pt away from the glass (the sidebar closes after 250 ms).
+    private var farSince: Double?
 
     private(set) var edge: ScreenEdge = .left
     private(set) var screen: NSScreen?
@@ -23,98 +32,290 @@ import SwiftUI
     /// `--hover`: simulated cursor at this fraction of the sidebar height (0 = top).
     private(set) var simulatedHover: Double?
 
-    var isVisible: Bool { panel.isVisible }
+    var isVisible: Bool { panel?.isVisible ?? false }
+
+    static let selectionSlackInward: CGFloat = 24
+    static let closeDistance: CGFloat = 40
+    static let closeDelay: Double = 0.25
+    static let flyoutHoverDelay: Double = 0.25
 
     init(settings: SettingsStore, clipboard: ClipboardStore, actions: ActionPerforming) {
         self.settings = settings
         self.clipboard = clipboard
         self.actions = actions
-
-        var tap: (SidebarItem) -> Void = { _ in }
-        let hosting = FirstMouseHostingView(rootView: SidebarView(settings: settings, onTap: { tap($0) }))
-        hosting.sizingOptions = []
-        self.panel = SidebarPanel(content: hosting)
-        tap = { [weak self] item in self?.handleTap(item) }
-        panel.onDismiss = { [weak self] in self?.dismissIfNotPinned() }
     }
 
+    // MARK: Show and hide
+
     func show(edge: ScreenEdge, on screen: NSScreen, atY y: CGFloat) {
+        if isVisible {
+            if edge == self.edge, screen == self.screen, !isClosing { return }
+            hide(animated: false)
+        }
+        generation += 1
+        isClosing = false
         self.edge = edge
         self.screen = screen
+
+        let panel = panel(for: edge)
+        self.panel = panel
+        let current = settings.settings
         let glass = glassRect(edge: edge, screen: screen, centerY: y)
         panel.setGlassFrame(glass, display: false)
+
+        model.edge = edge
+        model.canvas = SidebarCanvas(size: panel.frame.size, glassOrigin: panel.glassOriginInCanvas)
+        let cursorY = simulatedCursorY(glass: glass) ?? (glass.maxY - y)
+        model.cursorY = nil
+        model.heldSelection = nil
+        model.showsLabel = true
+        model.cascadeOrigin = Magnification(
+            count: current.enabledItems.count, tileSize: current.tileSize, magnification: 1, cursorY: cursorY,
+            selectionSlack: .greatestFiniteMagnitude
+        ).selectedIndex ?? 0
+        model.animatesCascade = false
+        model.presented = false
+        selectedIndex = nil
+        clipboardHoverStart = nil
+        farSince = nil
+
         panel.alphaValue = 1
         panel.orderFrontRegardless()
+        panel.overlay.layoutSubtreeIfNeeded()
+        if let view = panel.contentView {
+            let margins = panel.margins
+            let pivot = CGPoint(x: edge == .left ? margins.left : margins.left + glass.width, y: margins.bottom + glass.height / 2)
+            let away = glass.width + Theme.sidebarEdgeGap
+            SidebarAnimation.springIn(view, pivot: pivot, offset: CGVector(dx: edge == .left ? -away : away, dy: 0), scale: 0.92)
+        }
+        // Next turn of the run loop, so the hidden state is drawn before the cascade starts.
+        let token = generation
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.generation == token else { return }
+                self.model.animatesCascade = true
+                self.model.presented = true
+            }
+        }
+
+        startDisplayLink(on: panel.overlay)
         installClickMonitor()
+        tick()
         Log.sidebar.info("barra aberta na borda \(edge.rawValue, privacy: .public)")
     }
 
     func hide(animated: Bool) {
-        hideFlyout()
-        removeClickMonitor()
-        guard panel.isVisible else { return }
-        guard animated else {
-            panel.orderOut(nil)
+        hide(animated: animated, then: nil)
+    }
+
+    /// Closes the flyout and the sidebar; `then` runs once the sidebar is off screen.
+    private func hide(animated: Bool, then completion: (@MainActor () -> Void)?) {
+        if isClosing, animated {
+            // Already on its way out: run after the exit instead of restarting it.
+            if let completion {
+                DispatchQueue.main.asyncAfter(deadline: .now() + SidebarAnimation.exitDuration) {
+                    MainActor.assumeIsolated { completion() }
+                }
+            }
             return
         }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.18
-            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
-            panel.animator().alphaValue = 0
-        } completionHandler: { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self, self.panel.alphaValue == 0 else { return }
-                self.panel.orderOut(nil)
+        hideFlyout()
+        removeClickMonitor()
+        stopDisplayLink()
+        generation += 1
+        guard let panel, panel.isVisible else {
+            completion?()
+            return
+        }
+        guard animated, let view = panel.contentView else {
+            finishHide(panel)
+            completion?()
+            return
+        }
+        isClosing = true
+        let glass = panel.glassFrame
+        let margins = panel.margins
+        let pivot = CGPoint(x: edge == .left ? margins.left : margins.left + glass.width, y: margins.bottom + glass.height / 2)
+        let away = glass.width + Theme.sidebarEdgeGap
+        let token = generation
+        SidebarAnimation.out(view, pivot: pivot, offset: CGVector(dx: edge == .left ? -away : away, dy: 0), scale: 0.92) { [weak self] in
+            guard let self else { return }
+            // A newer show reuses the window: leave it alone.
+            if self.generation == token {
+                self.finishHide(panel)
             }
+            completion?()
         }
     }
 
+    private func finishHide(_ panel: SidebarPanel) {
+        panel.orderOut(nil)
+        if let view = panel.contentView { SidebarAnimation.reset(view) }
+        isClosing = false
+        model.cursorY = nil
+        model.animatesCascade = false
+        model.presented = false
+    }
+
     func simulateHover(fraction: Double) {
-        simulatedHover = fraction
+        simulatedHover = min(max(fraction, 0), 1)
+        tick()
     }
 
     // MARK: Flyout
 
     func showFlyout() {
-        guard panel.isVisible, flyout == nil else { return }
-        let list = ClipboardListView(store: clipboard) { [weak self] entry in self?.pick(entry) }
-            .frame(width: Theme.flyoutWidth)
-        let hosting = FirstMouseHostingView(rootView: list)
-        let height = ceil(hosting.fittingSize.height)
-        hosting.sizingOptions = []
-        let flyout = GlassPanel(content: hosting, configuration: SidebarPanel.flyoutConfiguration)
-        flyout.onDismiss = { [weak self] in self?.dismissIfNotPinned() }
-
-        let sidebarGlass = panel.glassFrame
-        let anchor = tileRect(for: .clipboard) ?? sidebarGlass
-        let x = edge == .left
-            ? sidebarGlass.maxX + Theme.sidebarEdgeGap
-            : sidebarGlass.minX - Theme.sidebarEdgeGap - Theme.flyoutWidth
-        var glass = CGRect(x: x, y: anchor.maxY - height, width: Theme.flyoutWidth, height: height)
-        if let visible = screen?.visibleFrame {
-            glass.origin.y = min(max(glass.minY, visible.minY + Theme.sidebarEdgeGap), visible.maxY - height - Theme.sidebarEdgeGap)
-        }
-        flyout.setGlassFrame(glass, display: false)
-        panel.addChildWindow(flyout, ordered: .above)
-        flyout.orderFrontRegardless()
+        guard let panel, panel.isVisible, !isClosing, flyout == nil,
+              let tile = tileRect(for: .clipboard)
+        else { return }
+        let flyout = ClipboardFlyout(store: clipboard, edge: edge) { [weak self] entry in self?.pick(entry) }
+        flyout.panel.onDismiss = { [weak self] in self?.dismissIfNotPinned() }
+        flyout.show(attachedTo: panel, sidebarGlass: panel.glassFrame, tile: tile, visibleFrame: screen?.visibleFrame)
         self.flyout = flyout
+        // The flyout covers the inner side: the magnifier rests and the tile stays selected.
+        model.heldSelection = settings.settings.enabledItems.firstIndex { $0.kind == .clipboard }
+        model.showsLabel = false
     }
 
     func hideFlyout() {
         guard let flyout else { return }
-        panel.removeChildWindow(flyout)
-        flyout.orderOut(nil)
+        flyout.close()
         self.flyout = nil
+        model.heldSelection = nil
+        model.showsLabel = true
+        clipboardHoverStart = nil
     }
 
     // MARK: Development
 
-    /// Glass rectangles of the open panels, for `--frame-file`.
+    /// On-screen rectangles of the open panels, for `--frame-file`: the sidebar's glass with the
+    /// magnified tiles and the label that spill past it, and the flyout's glass.
     func panelFramesForCapture() -> [String] {
-        [panel, flyout].compactMap { $0 }.filter(\.isVisible).map(\.glassFrameForCapture)
+        var lines: [String] = []
+        if let panel, panel.isVisible {
+            lines.append(GlassPanel.captureString(for: sidebarDrawnRect(panel: panel).integral))
+        }
+        if let flyout, flyout.panel.isVisible {
+            lines.append(flyout.panel.glassFrameForCapture)
+        }
+        return lines
     }
 
-    // MARK: Private
+    // MARK: Display link
+
+    private func startDisplayLink(on view: NSView) {
+        stopDisplayLink()
+        let link = view.displayLink(target: ticker, selector: #selector(SidebarTicker.tick(_:)))
+        link.add(to: .main, forMode: .common)
+        displayLink = link
+    }
+
+    private func stopDisplayLink() {
+        displayLink?.invalidate()
+        displayLink = nil
+    }
+
+    /// Every frame while visible: magnifier, selection, haptics, the flyout's hover delay and
+    /// closing when the cursor goes away.
+    private func tick() {
+        guard let panel, panel.isVisible, !isClosing else { return }
+        let glass = panel.glassFrame
+        let mouse = NSEvent.mouseLocation
+        let now = ProcessInfo.processInfo.systemUptime
+        let current = settings.settings
+        let overFlyout = flyout?.glassFrame.insetBy(dx: -4, dy: -4).contains(mouse) ?? false
+
+        var cursorY: CGFloat?
+        if let simulated = simulatedCursorY(glass: glass) {
+            cursorY = simulated
+        } else if !overFlyout, isInSelectionBand(mouse, glass: glass) {
+            cursorY = glass.maxY - mouse.y
+        }
+
+        var magnifierY = cursorY
+        let layout = Magnification(count: current.enabledItems.count, tileSize: current.tileSize, magnification: current.magnification, cursorY: cursorY)
+        if flyout != nil, let index = layout.selectedIndex, current.enabledItems[index].kind == .clipboard {
+            // Back on the clipboard tile with the flyout open: keep resting under the flyout.
+            magnifierY = nil
+        }
+        if Self.changed(model.cursorY, magnifierY) {
+            model.cursorY = magnifierY
+        }
+
+        updateSelection(layout.selectedIndex, items: current.enabledItems, now: now, haptics: current.haptics)
+
+        guard !isPinned, simulatedHover == nil else {
+            farSince = nil
+            return
+        }
+        var distance = Self.distance(from: mouse, to: sidebarDrawnRect(panel: panel))
+        if let flyout { distance = min(distance, Self.distance(from: mouse, to: flyout.glassFrame)) }
+        if distance > Self.closeDistance {
+            if let farSince {
+                if now - farSince >= Self.closeDelay { dismissIfNotPinned() }
+            } else {
+                farSince = now
+            }
+        } else {
+            farSince = nil
+        }
+    }
+
+    private func updateSelection(_ index: Int?, items: [SidebarItem], now: Double, haptics: Bool) {
+        if index != selectedIndex {
+            if index != nil, haptics {
+                NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+            }
+            selectedIndex = index
+            clipboardHoverStart = nil
+            if let index, flyout != nil, items[index].kind != .clipboard {
+                hideFlyout()
+            }
+        }
+        guard let index, items.indices.contains(index), items[index].kind == .clipboard, flyout == nil else { return }
+        if let start = clipboardHoverStart {
+            if now - start >= Self.flyoutHoverDelay { showFlyout() }
+        } else {
+            clipboardHoverStart = now
+        }
+    }
+
+    /// Between the screen edge and `selectionSlackInward` past the capsule's inner side.
+    private func isInSelectionBand(_ point: CGPoint, glass: CGRect) -> Bool {
+        let screenFrame = screen?.frame ?? glass
+        switch edge {
+        case .left: return point.x >= screenFrame.minX - 1 && point.x <= glass.maxX + Self.selectionSlackInward
+        case .right: return point.x <= screenFrame.maxX + 1 && point.x >= glass.minX - Self.selectionSlackInward
+        }
+    }
+
+    private func simulatedCursorY(glass: CGRect) -> CGFloat? {
+        simulatedHover.map { CGFloat($0) * glass.height }
+    }
+
+    /// Skips sub-quarter-point changes, so a still cursor does not redraw the tiles every frame.
+    private static func changed(_ old: CGFloat?, _ new: CGFloat?) -> Bool {
+        switch (old, new) {
+        case (nil, nil): return false
+        case let (old?, new?): return abs(old - new) > 0.25
+        default: return true
+        }
+    }
+
+    private static func distance(from point: CGPoint, to rect: CGRect) -> CGFloat {
+        let dx = max(rect.minX - point.x, 0, point.x - rect.maxX)
+        let dy = max(rect.minY - point.y, 0, point.y - rect.maxY)
+        return (dx * dx + dy * dy).squareRoot()
+    }
+
+    // MARK: Clicks
+
+    private func handleMouseDown() {
+        tick()
+        let items = settings.settings.enabledItems
+        guard let index = selectedIndex ?? model.heldSelection, items.indices.contains(index) else { return }
+        handleTap(items[index])
+    }
 
     private func handleTap(_ item: SidebarItem) {
         if item.kind == .clipboard {
@@ -122,38 +323,26 @@ import SwiftUI
             return
         }
         guard let screen else { return }
-        let context = ActionContext(edge: edge, screen: screen, anchor: tileRect(for: item.kind) ?? panel.glassFrame)
-        // Close first: captures must not include the sidebar.
-        hide(animated: false)
-        actions.perform(item, context: context)
+        let context = ActionContext(edge: edge, screen: screen, anchor: tileRect(for: item.id) ?? panel?.glassFrame ?? .zero)
+        Log.sidebar.info("executando item \(item.title, privacy: .public)")
+        // Close first (animated), run after: captures must not include the sidebar.
+        let actions = actions
+        hide(animated: true) {
+            actions.perform(item, context: context)
+        }
     }
 
     private func pick(_ entry: ClipboardEntry) {
         let paste = settings.settings.clipboard.autoPaste
-        hide(animated: true)
-        clipboard.copy(entry, paste: paste)
+        let clipboard = clipboard
+        hide(animated: true) {
+            clipboard.copy(entry, paste: paste)
+        }
     }
 
     private func dismissIfNotPinned() {
         guard !isPinned else { return }
         hide(animated: true)
-    }
-
-    private func glassRect(edge: ScreenEdge, screen: NSScreen, centerY: CGFloat) -> CGRect {
-        let size = SidebarView.glassSize(itemCount: settings.settings.enabledItems.count, tileSize: settings.settings.tileSize)
-        let frame = screen.frame
-        let visible = screen.visibleFrame
-        let x = edge == .left ? frame.minX + Theme.sidebarEdgeGap : frame.maxX - Theme.sidebarEdgeGap - size.width
-        let minY = visible.minY + Theme.sidebarEdgeGap
-        let maxY = max(minY, visible.maxY - Theme.sidebarEdgeGap - size.height)
-        let y = min(max(centerY - size.height / 2, minY), maxY)
-        return CGRect(x: x, y: y, width: size.width, height: size.height)
-    }
-
-    /// On-screen rectangle of the first enabled tile of `kind`.
-    private func tileRect(for kind: ActionKind) -> CGRect? {
-        guard let index = settings.settings.enabledItems.firstIndex(where: { $0.kind == kind }) else { return nil }
-        return SidebarView.tileRect(index: index, glass: panel.glassFrame, tileSize: settings.settings.tileSize)
     }
 
     /// Clicks in other apps close the sidebar (clicks on its own margin arrive via `onDismiss`).
@@ -167,5 +356,97 @@ import SwiftUI
     private func removeClickMonitor() {
         if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
         clickMonitor = nil
+    }
+
+    // MARK: Geometry
+
+    private func panel(for edge: ScreenEdge) -> SidebarPanel {
+        if let panel = panels[edge] { return panel }
+        let overlay = SidebarOverlayView(rootView: SidebarView(settings: settings, model: model))
+        let panel = SidebarPanel(edge: edge, overlay: overlay)
+        panel.onDismiss = { [weak self] in self?.dismissIfNotPinned() }
+        overlay.isInteractive = { [weak self, weak panel] point in
+            guard let self, let panel else { return false }
+            return self.isInteractive(point, in: panel)
+        }
+        overlay.onMouseDown = { [weak self] _ in self?.handleMouseDown() }
+        panels[edge] = panel
+        return panel
+    }
+
+    /// Whether a point in the overlay (window coordinates) is on the capsule or a magnified tile.
+    private func isInteractive(_ point: NSPoint, in panel: SidebarPanel) -> Bool {
+        guard panel.isVisible, !isClosing else { return false }
+        let screenPoint = NSPoint(x: point.x + panel.frame.minX, y: point.y + panel.frame.minY)
+        if panel.glassFrame.contains(screenPoint) { return true }
+        return currentTileRects(panel: panel).contains { $0.contains(screenPoint) }
+    }
+
+    private func currentLayout() -> Magnification {
+        let current = settings.settings
+        return Magnification(count: current.enabledItems.count, tileSize: current.tileSize, magnification: current.magnification, cursorY: model.cursorY)
+    }
+
+    private func currentTileRects(panel: SidebarPanel) -> [CGRect] {
+        let tileSize = settings.settings.tileSize
+        return currentLayout().tiles.map { SidebarView.tileRect($0, glass: panel.glassFrame, tileSize: tileSize, edge: edge) }
+    }
+
+    /// The glass with the magnified tiles and the label, in screen coordinates.
+    private func sidebarDrawnRect(panel: SidebarPanel) -> CGRect {
+        let tiles = currentTileRects(panel: panel)
+        var rect = tiles.reduce(panel.glassFrame) { $0.union($1) }
+        let items = settings.settings.enabledItems
+        let layout = currentLayout()
+        if settings.settings.showLabels, model.showsLabel,
+           let index = layout.selectedIndex, items.indices.contains(index), tiles.indices.contains(index) {
+            let tile = tiles[index]
+            let textWidth = (items[index].title as NSString).size(withAttributes: [.font: Theme.sidebarLabelFont]).width
+            let width = min(ceil(textWidth) + 20, Theme.sidebarLabelMaxWidth)
+            let x = edge == .left ? tile.maxX + Theme.sidebarLabelGap : tile.minX - Theme.sidebarLabelGap - width
+            rect = rect.union(CGRect(x: x, y: tile.midY - Theme.sidebarLabelHeight / 2, width: width, height: Theme.sidebarLabelHeight))
+        }
+        return rect
+    }
+
+    private func glassRect(edge: ScreenEdge, screen: NSScreen, centerY: CGFloat) -> CGRect {
+        let size = SidebarView.glassSize(itemCount: settings.settings.enabledItems.count, tileSize: settings.settings.tileSize)
+        let frame = screen.frame
+        let visible = screen.visibleFrame
+        let x = edge == .left ? frame.minX + Theme.sidebarEdgeGap : frame.maxX - Theme.sidebarEdgeGap - size.width
+        let minY = visible.minY + Theme.sidebarEdgeGap
+        let maxY = max(minY, visible.maxY - Theme.sidebarEdgeGap - size.height)
+        let y = min(max(centerY - size.height / 2, minY), maxY)
+        return CGRect(x: x, y: y, width: size.width, height: size.height)
+    }
+
+    /// On-screen rectangle (at rest) of the first enabled tile of `kind`.
+    private func tileRect(for kind: ActionKind) -> CGRect? {
+        guard let index = settings.settings.enabledItems.firstIndex(where: { $0.kind == kind }) else { return nil }
+        return tileRect(index: index)
+    }
+
+    private func tileRect(for id: UUID) -> CGRect? {
+        guard let index = settings.settings.enabledItems.firstIndex(where: { $0.id == id }) else { return nil }
+        return tileRect(index: index)
+    }
+
+    private func tileRect(index: Int) -> CGRect? {
+        guard let panel else { return nil }
+        return SidebarView.tileRect(index: index, glass: panel.glassFrame, tileSize: settings.settings.tileSize)
+    }
+}
+
+/// Display-link target (needs an Objective-C selector); holds the controller weakly through
+/// its closure, so the link does not keep the controller alive.
+private final class SidebarTicker: NSObject {
+    private let onTick: @MainActor () -> Void
+
+    init(onTick: @escaping @MainActor () -> Void) {
+        self.onTick = onTick
+    }
+
+    @objc func tick(_ link: CADisplayLink) {
+        MainActor.assumeIsolated { onTick() }
     }
 }
