@@ -8,6 +8,8 @@
     <string>iEdge</string>
     <key>CFBundleExecutable</key>
     <string>iEdge</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>br.dinsights.iedge</string>
     <key>CFBundleInfoDictionaryVersion</key>
