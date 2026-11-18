@@ -1,160 +1,219 @@
 # iEdge
 
-App nativo de barra de menus do macOS (Swift + SwiftUI + AppKit) que esconde uma **barra lateral
-nas bordas da tela**. Encoste o cursor na borda esquerda ou direita e ela salta com os seus
-atalhos: capturas de tela (tela inteira, área, janela), área de transferência com histórico e
-atalhos que você define (apps, links, Atalhos, comandos). Correr o cursor pela barra amplia o item
-mais próximo, como no Dock.
+[![CI](https://github.com/dinsightsbr/iEdge/actions/workflows/ci.yml/badge.svg)](https://github.com/dinsightsbr/iEdge/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/dinsightsbr/iEdge)](https://github.com/dinsightsbr/iEdge/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Platform: macOS 14+](https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey.svg)
 
-Mesmo visual do iSessions (vidro da Central de Controle, Liquid Glass no macOS 26). A
-especificação está em [docs/SPEC.md](docs/SPEC.md).
+**English** · [Português (Brasil)](README.pt-BR.md)
 
-## Requisitos
+A sidebar that springs out of the edge of your Mac's screen, with screenshots, clipboard history
+and your own shortcuts one flick of the cursor away.
 
-- macOS 14 (Sonoma) ou mais novo
-- Xcode 15+ **ou** só as Command Line Tools (`xcode-select --install`), Swift 5.9+
-- Sem dependências e sem rede
+<p align="center">
+  <img src="docs/images/hero.png" width="440" alt="The iEdge sidebar on the left edge of the screen, with the clipboard history open beside it">
+</p>
 
-## Rodar
+iEdge is a native menu-bar app (Swift, SwiftUI and AppKit) with no dependencies and no network
+access. It uses the visual language of the macOS Control Center: Liquid Glass on macOS 26 and the
+system material on macOS 14–15.
+
+> **Language:** the app's interface is in Brazilian Portuguese for now. Localization is very
+> welcome. See [Contributing](#contributing).
+
+## What it does
+
+- **A sidebar that springs from the edge.** Rest the cursor on the left or right edge of the
+  screen for a moment (150 ms by default), or push against it, and a glass capsule springs out at
+  the height of the cursor. It stays out of the way: it never opens in the top and bottom corners,
+  while a mouse button is held (dragging a window, selecting text), on the edge where the Dock is,
+  on an edge that touches another display, or while iEdge is paused.
+- **A magnifier like the Dock's.** Run the cursor along the sidebar and the closest item grows
+  into the screen, pushing its neighbours apart, with its name beside it and a light trackpad tap
+  when the selection changes.
+- **Screenshots.** Full screen (the display the sidebar was on), area and window, through the
+  system's `screencapture`. The sidebar closes first, so it never shows up in a capture. A preview
+  springs out of the same edge for 3 seconds: click to open it in Preview, drag it to drop the file
+  anywhere. There is also a button for the Screenshot app (⌘⇧5, which also records the screen).
+- **Clipboard history.** Text, images, files and links, with the app they came from and how long
+  ago. Pin the ones you want to keep; click an entry to copy it back and, optionally, paste it
+  straight into the frontmost app.
+- **Your own shortcuts.** Open an app, open a link or file, run a shortcut from the Shortcuts app,
+  or run a shell command. A failure shows a short notice at the edge, never a modal alert.
+
+<p align="center">
+  <img src="docs/images/sidebar.png" width="220" alt="The sidebar on the right edge, with the Área item magnified and its name beside it">
+  &nbsp;&nbsp;
+  <img src="docs/images/clipboard.png" width="380" alt="The sidebar on the left edge with the clipboard history, light appearance">
+</p>
+
+## Install
+
+1. Download `iEdge-<version>.zip` from the [latest release](https://github.com/dinsightsbr/iEdge/releases/latest)
+   (each release also lists the zip's SHA-256).
+2. Unzip it and move `iEdge.app` to `/Applications`.
+3. Open it. The icon (`sidebar.squares.left`) appears in the menu bar; there is no Dock icon.
+
+iEdge is **signed ad hoc and not notarized**, so on first launch macOS says it cannot verify the
+developer. Either right-click `iEdge.app` in Finder, choose **Open** and confirm, or clear the
+quarantine flag from Terminal:
 
 ```bash
-# desenvolvimento (o ícone aparece na barra de menus; não há ícone no Dock)
-bash scripts/run-dev.sh
-bash scripts/run-dev.sh --demo     # dados de exemplo, nada lido nem gravado
+xattr -dr com.apple.quarantine /Applications/iEdge.app
+```
 
-# testes (geometria da borda, lupa, histórico do clipboard, capturas, ajustes)
-swift test
+Requires macOS 14 (Sonoma) or later.
 
-# gerar o .app (release, assinatura ad-hoc, com ícone) em build/iEdge.app
-bash scripts/build-app.sh
+## Build from source
+
+Requirements:
+
+- A Mac with **Xcode 26 or later** (or the matching Command Line Tools). The code uses Liquid Glass
+  (`NSGlassEffectView` and SwiftUI's `glassEffect`), which only exists in the **macOS 26 SDK**; it
+  is guarded at runtime, so the app still runs on macOS 14 and 15.
+- Nothing else: no packages, no network.
+
+```bash
+swift build                     # debug build
+swift test                      # unit tests
+bash scripts/build-app.sh       # release build, wrapped and signed ad hoc in build/iEdge.app
 open build/iEdge.app
 ```
 
-Permissões (Gravação de Tela, Acessibilidade) e "abrir ao iniciar sessão" só se comportam direito
-a partir do `.app`. O ícone sai de `scripts/make-icon.swift` (desenhado em CoreGraphics); para
-redesenhar: `swift scripts/make-icon.swift` (grava `Resources/AppIcon.icns`).
+To install your build: `rm -rf /Applications/iEdge.app && cp -R build/iEdge.app /Applications/`.
 
-## O que aparece
+Permissions and **Open at login** only behave properly from the `.app` bundle. Because the bundle
+is signed ad hoc, macOS may treat each new build as a different app: if a permission you granted
+"disappears" after rebuilding, remove iEdge from the list in System Settings and grant it again.
 
-- **A barra**: encoste o cursor na borda e deixe parado um instante (150 ms por padrão) ou
-  empurre contra ela. A cápsula de vidro salta da borda com mola, 8 pt afastada dela, na altura do
-  cursor. Não abre nos cantos (32 pt de cima e de baixo), com um botão do mouse apertado
-  (arrastando janela, selecionando texto), na borda onde está o Dock, numa borda que encosta em
-  outra tela, nem com o iEdge pausado. Depois de fechar, só reabre quando o cursor sair da borda.
-- **Lupa**: com a barra aberta, o item mais perto do cursor cresce para dentro da tela e empurra os
-  vizinhos, com o nome dele numa cápsula ao lado e um toque leve no trackpad ao trocar de item.
-- **Clique** num item executa. A barra fecha antes, então as capturas nunca a pegam. Ela também
-  fecha quando o cursor se afasta mais de 40 pt ou com um clique fora.
-- **Itens padrão**, nesta ordem: Tela inteira, Área, Janela, Área de transferência e Ferramenta de
-  captura (o app Captura de Tela, ⌘⇧5, que também grava a tela).
-- **Capturas** usam `/usr/sbin/screencapture`. Tela inteira pega a tela onde a barra estava; Área e
-  Janela são interativas (Esc cancela, sem arquivo e sem aviso). O arquivo vai para a pasta de
-  capturas do sistema (ou a escolhida) como `Captura de Tela 2026-11-18 às 14.05.33.png`. A prévia
-  salta da mesma borda por 3 s (pausa com o cursor em cima): clique abre no Pré-Visualização,
-  arrastar leva o arquivo.
-- **Área de transferência**: parar 250 ms sobre o item (ou clicar) abre o histórico ao lado da
-  barra: texto, imagens, arquivos e links, com o app de origem e há quanto tempo. Fixadas ficam no
-  topo e não saem pelo limite. Clicar numa entrada copia de volta e, com **Colar automaticamente**,
-  manda ⌘V ao app da frente.
-- **Privacidade do clipboard**: nunca entram cópias marcadas como senha ou transitórias
-  (`org.nspasteboard.ConcealedType`, `TransientType`, `AutoGeneratedType`), cópias feitas nos apps
-  excluídos (1Password, Bitwarden, Senhas e Acesso às Chaves por padrão), texto acima de 200 KB e
-  imagem acima de 20 MB. O conteúdo copiado nunca vai para o log.
-- **Atalhos seus**: abrir app, abrir link ou arquivo, rodar um atalho do app Atalhos
-  (`shortcuts run`) ou um comando (`/bin/zsh -lc`, sem terminal, saída descartada). Uma falha vira
-  um aviso curto na borda, nunca um alerta.
+## Permissions
 
-## Ajustes
+iEdge asks only for what each feature needs, and works without them (that feature is simply left
+out). Settings shows the state of each one and re-reads it while open, so you can grant it in
+System Settings and come back.
 
-O ícone `sidebar.squares.left` fica na barra de menus (meio apagado quando o iEdge está pausado).
-**Clique** abre os Ajustes num painel de vidro logo abaixo dele; Esc ou um clique fora fecha.
-**Clique direito** abre o menu rápido: Pausar/Retomar, Mostrar barra esquerda, Mostrar barra
-direita, Ajustes…, Sair. A barra aberta pelo menu (ou por **Testar**) fica 4 s mesmo com o cursor
-longe e depois volta a seguir o cursor. Tudo salva na hora, sem botão Salvar.
-
-| Aba | O que tem |
+| Permission | What it enables |
 | --- | --- |
-| **Itens** | Os itens da barra, na ordem: interruptor para cada um, arrastar (ou ↑↓ ao passar o cursor) para reordenar. **Adicionar atalho** abre um formulário: App (escolhido em /Applications, o nome vem do app), Link (endereço, domínio ou caminho `~/…`), Atalho (do app Atalhos, com a lista dos seus) ou Comando (`/bin/zsh -lc`), com nome e símbolo SF com prévia. Os atalhos criados podem ser editados e removidos; os embutidos só desligam. **Restaurar padrão** volta os embutidos à ordem original, ligados, e mantém os seus atalhos no fim, desligados. |
-| **Bordas** | Borda esquerda e direita (com aviso quando o Dock está naquele lado e a opção de abrir mesmo assim), tempo na borda (80–400 ms), empurrão (4–60 pt), ampliação (desligada a 2×), tamanho dos itens (36–56 pt), nome do item, toque no trackpad e os botões **Testar à esquerda/direita**. |
-| **Capturas** | Destino (Arquivo, Clipboard ou Ambos), pasta (escolher uma ou usar a do sistema), som, prévia e o estado da permissão de Gravação de Tela. |
-| **Clipboard** | Guardar o histórico, tamanho (20–200 entradas; ao diminuir, as mais antigas saem quando o valor assenta), colar automaticamente, apps excluídos e **Limpar histórico** (as fixadas ficam). |
-| **Geral** | Abrir ao iniciar sessão, pausar, permissões, versão e Sair. |
+| **Screen Recording** | Full-screen, area and window screenshots. Without it, clicking a capture item shows a notice with a shortcut to the right System Settings pane. |
+| **Accessibility** | **Paste automatically** (*Colar automaticamente*): sending ⌘V to the frontmost app after you pick a clipboard entry. Without it, the entry is only copied. |
 
-## Permissões
+Detecting the edge needs no permission at all: mouse-move events don't require Accessibility.
+**Open at login** (*Abrir ao iniciar sessão*) uses `SMAppService` and works only with
+`iEdge.app` in `/Applications`.
 
-O iEdge pede só o que cada função precisa, e funciona sem elas (a função correspondente fica de fora).
-Os Ajustes mostram o estado de cada uma e releem enquanto estão abertos, então dá para conceder nos
-Ajustes do Sistema e voltar.
+## Privacy
 
-| Permissão | O que libera | Como conceder |
-| --- | --- | --- |
-| **Gravação de Tela** | Capturas de tela inteira, área e janela. | Ajustes › Capturas ou Geral › **Conceder**. Na primeira vez o macOS mostra o pedido; depois o botão vira **Abrir Ajustes** e leva a Ajustes do Sistema › Privacidade e Segurança › Gravação de Tela e Áudio do Sistema. Ligue o iEdge e reabra o app se o macOS pedir. Sem ela, clicar numa captura mostra um aviso com o atalho para esse painel. |
-| **Acessibilidade** | Colar automaticamente (⌘V no app da frente) ao escolher uma entrada do clipboard. | Ao ligar **Colar automaticamente**, ou em Geral › **Conceder**. Leva a Privacidade e Segurança › Acessibilidade; ligue o iEdge. Sem ela, a entrada só é copiada. |
+- **No network.** iEdge itself makes no network requests: no analytics, no telemetry, no update
+  checks. (A link or shell command you add as a shortcut does whatever it does, of course.)
+- **Everything stays on your Mac**, in `~/Library/Application Support/iEdge/`:
+  - `settings.json`: settings and sidebar items;
+  - `clipboard.json`: the clipboard history (only with **Save history**, *Guardar o histórico*, on);
+  - `clipboard/`: copied images (`<id>.png` and a `<id>-thumb.png` thumbnail).
+- **What the clipboard history never records:**
+  - copies marked as concealed, transient or auto-generated (`org.nspasteboard.ConcealedType`,
+    `TransientType`, `AutoGeneratedType`), which is how password managers mark passwords;
+  - copies made in excluded apps (1Password, Bitwarden, Passwords and Keychain Access by default;
+    you can edit the list);
+  - text over 200 KB and images over 20 MB;
+  - iEdge's own writes to the clipboard.
+- With **Save history** off, the history lives only in memory and its images are deleted on quit.
+  **Clear history** (*Limpar histórico*) removes every entry except the pinned ones, along with
+  their files. If `settings.json` or `clipboard.json` can't be read, iEdge starts from the defaults
+  and keeps the original as `settings.json.corrompido` / `clipboard.json.corrompido`.
+- Copied content is never written to the system log.
+- Screenshots go to the system's screenshot folder (or one you choose), the clipboard, or both.
 
-Detectar a borda não pede permissão nenhuma (eventos de movimento do mouse não precisam de
-Acessibilidade). **Abrir ao iniciar sessão** usa `SMAppService` e só funciona com o `iEdge.app` em
-/Applications; fora disso os Ajustes dizem o que fazer. Se você desligar o iEdge em Ajustes do Sistema ›
-Geral › Itens de Início, os Ajustes mostram isso com um botão para reabrir esse painel.
+To remove all of iEdge's data, quit it and delete `~/Library/Application Support/iEdge/`.
 
-Como o `.app` é assinado ad-hoc, cada novo build pode ser visto pelo macOS como outro app: se uma
-permissão concedida "sumir" depois de recompilar, remova o iEdge da lista e conceda de novo.
+## Settings
 
-## Onde ficam os dados
+Click the menu-bar icon to open Settings in a glass panel below it (Esc or a click outside closes
+it). Right-click it for the quick menu: Pause/Resume, Show left sidebar, Show right sidebar,
+Settings…, Quit. Everything saves immediately.
 
-`~/Library/Application Support/iEdge/` (criada no primeiro ajuste ou cópia salvos)
-
-- `settings.json`: ajustes e itens da barra
-- `clipboard.json`: histórico do clipboard (só com **Guardar o histórico** ligado)
-- `clipboard/`: as imagens copiadas (`<id>.png` e a miniatura `<id>-thumb.png`)
-
-Com **Guardar o histórico** desligado o histórico fica só na memória, e as imagens são apagadas ao
-sair. Se `settings.json` ou `clipboard.json` estiverem ilegíveis, o iEdge começa com os padrões e
-guarda o original como `settings.json.corrompido` / `clipboard.json.corrompido`. No modo `--demo`
-nada é lido nem gravado ali.
-
-## Flags de desenvolvimento
-
-| Flag | Efeito |
+| Tab | What's in it |
 | --- | --- |
-| `--demo` | ajustes e clipboard em memória, com 8 entradas de exemplo |
-| `--show left\|right` | abre a barra nessa borda da tela principal ao iniciar |
-| `--pin` | a barra não fecha sozinha |
-| `--hover 0.0…1.0` | simula o cursor nessa fração da altura da barra (lupa) |
-| `--flyout` | abre o painel do clipboard junto com a barra |
-| `--settings [itens\|bordas\|capturas\|clipboard\|geral]` | abre os Ajustes nessa aba |
-| `--frame-file <arquivo>` | grava `x y w h` de cada painel aberto (coordenadas do `screencapture -R`) |
-| `--snapshot <nome> --out <arquivo.png> [--scheme light\|dark]` | renderiza uma view em PNG e sai, sem abrir janela |
-| `--snapshot list` | lista os snapshots disponíveis |
+| **Itens** (Items) | The sidebar items in order: a switch for each, drag (or ↑↓) to reorder, **Add shortcut** (app, link, Shortcuts shortcut or shell command, with a name and an SF Symbol), edit and remove your own shortcuts, **Restore defaults**. |
+| **Bordas** (Edges) | Left and right edge (with a warning when the Dock is on that side), time on the edge, push distance, magnification, item size, item names, trackpad tap, and **Test** buttons for each edge. |
+| **Capturas** (Screenshots) | Destination (file, clipboard or both), folder, sound, preview, and the Screen Recording permission. |
+| **Clipboard** | Save history, history size (20–200 entries), paste automatically, excluded apps, **Clear history**. |
+| **Geral** (General) | Open at login, pause, permissions, version and Quit. |
 
-Exemplos:
+<p align="center">
+  <img src="docs/images/settings-items.png" width="400" alt="Settings, Itens tab">
+  &nbsp;
+  <img src="docs/images/settings-edges.png" width="400" alt="Settings, Bordas tab">
+</p>
+
+## Development
+
+`bash scripts/run-dev.sh [flags]` runs the debug build straight from SwiftPM and passes any flags
+through. These development flags exist to make the app easy to inspect and screenshot:
+
+| Flag | Effect |
+| --- | --- |
+| `--demo` | settings and clipboard in memory, with 8 sample entries; nothing is read from or written to disk |
+| `--show left\|right` | opens the sidebar on that edge of the main screen at launch |
+| `--pin` | the sidebar doesn't close by itself |
+| `--hover 0.0…1.0` | simulates the cursor at that fraction of the sidebar's height (magnifier) |
+| `--flyout` | opens the clipboard history with the sidebar |
+| `--settings [itens\|bordas\|capturas\|clipboard\|geral]` | opens Settings on that tab |
+| `--backdrop` | a full-screen gradient behind the panels, so screenshots show nothing of your screen |
+| `--scheme light\|dark` | appearance for `--snapshot` and `--backdrop` |
+| `--frame-file <file>` | writes `x y w h` of each open panel, in `screencapture -R` coordinates |
+| `--snapshot <name> --out <file.png>` | renders one view to a PNG and exits, without opening a window |
+| `--snapshot list` | lists the available snapshots |
 
 ```bash
-.build/debug/iEdge --snapshot sidebar --out /tmp/sidebar.png --demo
+# Render a view without launching the app
 .build/debug/iEdge --snapshot clipboard --out /tmp/clip.png --scheme dark
-scripts/run-dev.sh --demo --show left --pin --flyout --frame-file /tmp/frames.txt
+
+# Screenshot the real app on a clean background
+.build/debug/iEdge --demo --backdrop --show left --pin --flyout --frame-file /tmp/frames.txt &
+sleep 4 && cat /tmp/frames.txt   # x y w h per panel, origin at the top left
 ```
 
-Sem `--pin`, a barra de `--show` fecha sozinha 0,25 s depois se o cursor estiver longe dela.
+Glass doesn't render outside a window, so `--snapshot` draws a translucent gray instead; native
+controls are replaced by drawn stand-ins (see `Sources/iEdge/Core/SnapshotSupport.swift`). Use
+`--backdrop` with the real app when you need the real glass. The images in `docs/images/` were
+taken this way.
 
-O vidro não renderiza fora de uma janela; no snapshot ele vira um fundo cinza translúcido. Os
-controles nativos (segmented, toggle, slider, botões, ScrollView) também não, e por isso as views usam
-`.snapshotStandIn { … }` e `LiveScrollView` (veja `Sources/iEdge/Core/SnapshotSupport.swift`).
+The app icon is drawn in code by `scripts/make-icon.swift`; run `swift scripts/make-icon.swift`
+to regenerate `Resources/AppIcon.icns`. Logs use the subsystem `br.dinsights.iedge`:
 
-## Estrutura
+```bash
+log stream --predicate 'subsystem == "br.dinsights.iedge"'
+```
+
+## Architecture
 
 ```
 Sources/iEdge/
-  App/        main.swift, AppDelegate (liga tudo), LaunchOptions (flags de dev)
-  Core/       Theme, GlassPanel (vidro), AppPaths, Log, Snapshot
-  Models/     ScreenEdge, ActionKind, SidebarItem, AppSettings, ClipboardEntry
+  App/        entry point, AppDelegate (wires everything), development flags
+  Core/       glass panel, theme, paths, logging, snapshot mode
+  Models/     settings, sidebar items, actions, clipboard entries
   Stores/     SettingsStore (settings.json)
-  Edge/       EdgeMonitor, EdgeGeometry (funções puras)
-  Sidebar/    SidebarController, SidebarPanel, SidebarView, Magnification (pura), ClipboardFlyout
-  Actions/    ActionRunner, ScreenshotService, CaptureToast, CustomActions, ActionProcess
-  Clipboard/  ClipboardMonitor, ClipboardHistory (pura), ClipboardStore, ClipboardListView
-  MenuBar/    StatusItemController
-  Settings/   SettingsRootView e uma view por aba, PermissionCenter, LoginItem
-Resources/    Info.plist, AppIcon.icns
-scripts/      run-dev.sh, build-app.sh, make-icon.swift
-Tests/iEdgeTests/
+  Edge/       EdgeMonitor and the pure edge geometry
+  Sidebar/    the sidebar panel, its view, the pure magnifier, the clipboard flyout
+  Actions/    screenshots, custom shortcuts, the preview toast
+  Clipboard/  pasteboard monitor, pure history rules, store, list view
+  MenuBar/    status item and the Settings panel
+  Settings/   one view per tab, permissions, login item
 ```
+
+The edge monitor watches mouse-move events and tells the sidebar controller to show itself; the
+sidebar runs a display link only while it is visible, and hands the clicked item to the action
+runner after it has closed. The rules that matter (edge geometry, magnifier, clipboard history,
+settings decoding, capture arguments) are pure functions with unit tests. See
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full picture, and
+[docs/SPEC.md](docs/SPEC.md) for the original design spec (in Portuguese).
+
+## Contributing
+
+Contributions are welcome, in English or Portuguese: bug reports, ideas, fixes, and especially
+localization of the interface. Please read [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[Code of Conduct](CODE_OF_CONDUCT.md). To report a security issue, see [SECURITY.md](SECURITY.md).
+
+## License
+
+[MIT](LICENSE) © 2026 Data Insights
