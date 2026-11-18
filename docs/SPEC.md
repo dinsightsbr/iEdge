@@ -56,13 +56,14 @@ Central de Controle. Textos da interface em **pt-BR**. Código e comentários em
   e atualiza a ampliação. Escala de cada tile pela distância vertical `d` entre o cursor e o centro
   do tile: `1 + (m - 1) * exp(-d² / (2σ²))`, `m = magnification` (padrão 1.6), `σ ≈ 1.2 × tileSize`.
   O tile cresce **para dentro da tela** (ancorado no lado da borda) e empurra os vizinhos na vertical,
-  como no Dock. Os tiles ampliados podem passar da cápsula de vidro. O cálculo fica numa função pura testável.
+  como no Dock. A cápsula de vidro cresce na vertical com a pilha ampliada, com o centro fixo; os
+  tiles ampliados passam dela só para dentro da tela. O cálculo fica numa função pura testável.
 - Item selecionado = o mais próximo do cursor enquanto o cursor está sobre a barra (com folga de
   ~24 pt para dentro). Ao lado dele, para dentro da tela, aparece o **rótulo** numa cápsula de vidro
   pequena (`showLabels`). Ao trocar de item, toque háptico leve no trackpad
   (`NSHapticFeedbackManager`, `.alignment`) se `haptics`.
-- **Salto ao abrir**: a cápsula entra de fora da tela com mola (`response ≈ 0.38`, `damping ≈ 0.72`,
-  passa ~6 pt do ponto e volta), com escala 0.92 → 1 ancorada na borda e opacidade 0 → 1. Os tiles
+- **Salto ao abrir**: a cápsula entra de fora da tela com mola (`response ≈ 0.38`, amortecimento
+  calculado para passar ~6 pt do ponto sobre o percurso real e voltar; ≈ 0.62 com os tiles padrão), com escala 0.92 → 1 ancorada na borda e opacidade 0 → 1. Os tiles
   entram em cascata a partir do mais próximo do cursor (15 ms entre cada), cada um com a própria mola.
   **Ao fechar**: sai para a borda em ~0.18 s, ease-in.
 - Fecha quando: o cursor se afasta mais de 40 pt do vidro (com 250 ms de tolerância), clique fora,

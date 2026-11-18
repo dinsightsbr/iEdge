@@ -117,6 +117,73 @@ final class MagnificationTests: XCTestCase {
         XCTAssertNil(result.selectedIndex)
     }
 
+    // MARK: Centred stack (the capsule follows it)
+
+    func testCentredStackStaysInsideACapsuleWithAFixedCentre() {
+        let rest = Magnification.restingHeight(count: 5, tileSize: tile, spacing: spacing, padding: padding)
+        for cursor in stride(from: CGFloat(-40), through: rest + 40, by: 3) {
+            let result = Magnification(count: 5, tileSize: tile, magnification: 1.6, cursorY: cursor, spacing: spacing, padding: padding, anchor: .center)
+            // Same sizes and height as the cursor-anchored stack, only shifted.
+            let anchored = layout(cursorY: cursor)
+            XCTAssertEqual(result.totalHeight, anchored.totalHeight, accuracy: 1e-9)
+            XCTAssertEqual(result.tiles.map(\.size), anchored.tiles.map(\.size))
+            // The capsule keeps its centre…
+            XCTAssertEqual(result.top + result.totalHeight / 2, rest / 2, accuracy: 1e-9, "cursor \(cursor)")
+            // …and holds every tile, with the resting padding at both ends.
+            XCTAssertEqual(result.tiles[0].centerY - result.tiles[0].size / 2, result.top + padding, accuracy: 1e-9)
+            let last = result.tiles[4]
+            XCTAssertEqual(last.centerY + last.size / 2, result.top + result.totalHeight - padding, accuracy: 1e-9)
+            XCTAssertEqual(result.selectedIndex, anchored.selectedIndex)
+        }
+    }
+
+    func testCentredStackIsContinuousAndRestsWithoutCursor() {
+        let rest = Magnification(count: 5, tileSize: tile, magnification: 1.6, cursorY: nil, spacing: spacing, padding: padding, anchor: .center)
+        XCTAssertEqual(rest, layout(cursorY: nil))
+        for cursor in stride(from: CGFloat(-30), through: 300, by: 0.5) {
+            let a = Magnification(count: 5, tileSize: tile, magnification: 1.6, cursorY: cursor, spacing: spacing, padding: padding, anchor: .center)
+            let b = Magnification(count: 5, tileSize: tile, magnification: 1.6, cursorY: cursor + 0.01, spacing: spacing, padding: padding, anchor: .center)
+            XCTAssertEqual(a.totalHeight, b.totalHeight, accuracy: 0.05)
+            for (x, y) in zip(a.tiles, b.tiles) {
+                XCTAssertEqual(x.centerY, y.centerY, accuracy: 0.05, "cursor \(cursor)")
+            }
+        }
+    }
+
+    func testCentredOnTheMiddleTileMatchesTheCursorAnchor() {
+        // Symmetric case: the magnified tile stays under the cursor either way.
+        let centred = Magnification(count: 5, tileSize: tile, magnification: 1.6, cursorY: restCenter(2), spacing: spacing, padding: padding, anchor: .center)
+        XCTAssertEqual(centred.tiles[2].centerY, restCenter(2), accuracy: 1e-9)
+    }
+
+    func testCapsuleRectKeepsWidthAndCentre() {
+        let glass = CGRect(x: 100, y: 300, width: 64, height: Magnification.restingHeight(count: 5, tileSize: 44))
+        let layout = Magnification(count: 5, tileSize: 44, magnification: 1.6, cursorY: 20, anchor: .center)
+        let capsule = SidebarView.capsuleRect(layout, glass: glass)
+        XCTAssertEqual(capsule.minX, glass.minX)
+        XCTAssertEqual(capsule.width, glass.width)
+        XCTAssertEqual(capsule.midY, glass.midY, accuracy: 1e-9)
+        XCTAssertEqual(capsule.height, layout.totalHeight, accuracy: 1e-9)
+        XCTAssertGreaterThan(capsule.height, glass.height)
+        // Every magnified tile is inside it vertically (it may spill inwards horizontally).
+        for tile in layout.tiles {
+            let rect = SidebarView.tileRect(tile, glass: glass, tileSize: 44, edge: .left)
+            XCTAssertGreaterThanOrEqual(rect.minY, capsule.minY - 1e-9)
+            XCTAssertLessThanOrEqual(rect.maxY, capsule.maxY + 1e-9)
+        }
+    }
+
+    func testCentredCapsuleFitsTheWindowAtTheLargestSettings() {
+        for count in 1...12 {
+            let glassHeight = Magnification.restingHeight(count: count, tileSize: 56)
+            for cursor in stride(from: CGFloat(-60), through: glassHeight + 60, by: 4) {
+                let result = Magnification(count: count, tileSize: 56, magnification: 2, cursorY: cursor, anchor: .center)
+                // Room left above and below for the glass shadow.
+                XCTAssertLessThanOrEqual(-result.top, SidebarPanel.verticalMargin - SidebarPanel.outwardMargin)
+            }
+        }
+    }
+
     func testMaxOverflowCoversTheLargestSettings() {
         let worst = Magnification.maxOverflow(count: 12, tileSize: 56, magnification: 2)
         XCTAssertLessThan(worst, SidebarPanel.verticalMargin)
