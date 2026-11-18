@@ -1,0 +1,78 @@
+name: Bug report
+description: Something in iEdge doesn't work as expected.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! English or Portuguese are both fine.
+        For security problems, please use private reporting instead (see SECURITY.md).
+
+  - type: input
+    id: iedge-version
+    attributes:
+      label: iEdge version
+      description: Settings › Geral shows it. Write "built from source" plus the commit if you built it yourself.
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version
+      description: Apple menu › About This Mac.
+      placeholder: "macOS 26.1 (25B78)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: displays
+    attributes:
+      label: Displays
+      description: How many screens, how they are arranged, which one is the main one, and where the Dock is.
+      placeholder: "MacBook built-in display, external monitor to its right; Dock at the bottom."
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Rest the cursor on the right edge
+        2. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: Screenshots or a screen recording help a lot. Please check that they don't show anything private.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs (optional)
+      description: |
+        Output of `log show --last 5m --predicate 'subsystem == "br.dinsights.iedge"'` right after the problem.
+        iEdge never logs clipboard contents, but please look over the output before pasting it.
+      render: text
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched the existing issues and this hasn't been reported yet.
+          required: true

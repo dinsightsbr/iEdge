@@ -1,0 +1,88 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Read version
+        id: version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          plist_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)
+          if [[ "$version" != "$plist_version" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match CFBundleShortVersionString $plist_version in Resources/Info.plist"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Test
+        run: swift test
+
+      - name: Build iEdge.app
+        run: bash scripts/build-app.sh
+
+      - name: Package
+        id: package
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          zip="iEdge-$VERSION.zip"
+          ditto -c -k --keepParent build/iEdge.app "$zip"
+          shasum -a 256 "$zip" > "$zip.sha256"
+          cat "$zip.sha256"
+          echo "zip=$zip" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(cut -d ' ' -f 1 "$zip.sha256")" >> "$GITHUB_OUTPUT"
+
+      - name: Release notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA256: ${{ steps.package.outputs.sha256 }}
+          ZIP: ${{ steps.package.outputs.zip }}
+        run: |
+          # The section of CHANGELOG.md for this version, without its heading; it ends at the
+          # next version heading or at the link references at the bottom of the file.
+          awk -v v="$VERSION" '
+            /^## \[/ { if (found) exit; if (index($0, "## [" v "]") == 1) { found = 1; next } }
+            /^\[[^]]+\]: / { if (found) exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          if [[ ! -s notes.md ]]; then
+            echo "::error::No section for $VERSION in CHANGELOG.md"
+            exit 1
+          fi
+          {
+            echo
+            echo "### Install"
+            echo
+            echo "Download \`$ZIP\`, unzip it and move \`iEdge.app\` to \`/Applications\`. The app is signed ad hoc and not notarized: right-click it and choose **Open** the first time, or run \`xattr -dr com.apple.quarantine /Applications/iEdge.app\`."
+            echo
+            echo "SHA-256 of \`$ZIP\`: \`$SHA256\`"
+          } >> notes.md
+          cat notes.md
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          ZIP: ${{ steps.package.outputs.zip }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "$ZIP" "$ZIP.sha256" \
+            --title "iEdge $VERSION" \
+            --notes-file notes.md \
+            --verify-tag

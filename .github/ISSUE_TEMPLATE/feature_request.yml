@@ -1,0 +1,37 @@
+name: Feature request
+description: Suggest an idea or an improvement for iEdge.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea! English or Portuguese are both fine.
+        iEdge aims to stay small, native, offline and dependency-free, so ideas that fit that are the easiest to take in.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do, and what gets in the way today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: The idea
+      description: How would you like it to work? Mock-ups or sketches are welcome.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contributing
+      options:
+        - label: I'd like to work on this myself.
