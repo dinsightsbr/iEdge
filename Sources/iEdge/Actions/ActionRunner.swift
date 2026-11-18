@@ -9,6 +9,9 @@ import AppKit
     let toast = CaptureToastController()
     private let screenshots: ScreenshotService
     private let custom: CustomActions
+    /// Runs before a capture, so other iEdge panels (Settings, opened next to the sidebar by
+    /// "Testar") are out of the way like the sidebar itself.
+    var willCapture: (() -> Void)?
 
     init(settings: SettingsStore, clipboard: ClipboardStore) {
         self.settings = settings
@@ -21,6 +24,7 @@ import AppKit
         Log.actions.info("perform \(item.kind.kindTitle, privacy: .public) na borda \(context.edge.rawValue, privacy: .public)")
         switch item.kind {
         case .screenshotFull, .screenshotArea, .screenshotWindow:
+            willCapture?()
             screenshots.capture(item.kind, context: context)
         case .captureTool:
             screenshots.openCaptureTool(context: context)
