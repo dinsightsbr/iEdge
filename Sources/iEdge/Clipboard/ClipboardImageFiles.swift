@@ -68,6 +68,21 @@ enum ClipboardImageFiles {
         }
     }
 
+    /// Deletes the entry's files only when they live directly in `directory`. The paths come from
+    /// clipboard.json, which is just a file on disk: a damaged or edited one must never make
+    /// eviction or "Limpar" delete something else.
+    static func delete(_ content: ClipboardContent, inside directory: URL) {
+        for path in paths(of: content) where isInside(path, directory: directory) {
+            try? FileManager.default.removeItem(atPath: path)
+        }
+    }
+
+    static func isInside(_ path: String, directory: URL) -> Bool {
+        let file = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
+        let folder = directory.standardizedFileURL.resolvingSymlinksInPath()
+        return file.deletingLastPathComponent().path == folder.path
+    }
+
     /// Two image entries hold the same picture: same size and byte-identical PNG.
     static func sameImage(_ a: ClipboardContent, _ b: ClipboardContent) -> Bool {
         guard case let .image(pathA, _, wA, hA, bytesA) = a, case let .image(pathB, _, wB, hB, bytesB) = b else { return false }

@@ -27,6 +27,7 @@ import Combine
     private let monitor = ClipboardMonitor()
     private var settingsObserver: AnyCancellable?
     private var pendingSave: DispatchWorkItem?
+    private var pendingTrim: DispatchWorkItem?
     /// Images that exist only in memory (demo); real entries load from their PNG path.
     private var memoryImages: [UUID: NSImage] = [:]
     /// The clipboard settings in effect. Kept here because `$settings` publishes before the new
@@ -36,6 +37,7 @@ import Combine
 
     static let saveDelay: TimeInterval = 0.5
     static let pasteDelay: TimeInterval = 0.12
+    static let trimDelay: TimeInterval = 1.0
 
     convenience init(settings: SettingsStore, demo: Bool) {
         if demo {
@@ -59,17 +61,28 @@ import Combine
         let clipboardSettings = settings.settings.clipboard
         self.options = clipboardSettings
         var initial = entries
+        var fileIsReadable = true
         if let storage {
-            initial = clipboardSettings.persist ? Self.load(from: storage.file) : []
-            if !clipboardSettings.persist { try? FileManager.default.removeItem(at: storage.file) }
+            if clipboardSettings.persist {
+                let loaded = Self.load(from: storage.file)
+                initial = loaded ?? []
+                fileIsReadable = loaded != nil
+            } else {
+                initial = []
+                try? FileManager.default.removeItem(at: storage.file)
+            }
         }
         var history = ClipboardHistory(entries: initial, maxEntries: clipboardSettings.maxEntries)
         let evicted = history.setMaxEntries(clipboardSettings.maxEntries)
         self.history = history
         self.entries = history.entries
         self.memoryImages = images
-        evicted.forEach { ClipboardImageFiles.delete($0.content) }
-        if let storage { Self.deleteOrphanImages(in: storage.imagesDirectory, keeping: history.entries) }
+        if let storage {
+            evicted.forEach { ClipboardImageFiles.delete($0.content, inside: storage.imagesDirectory) }
+            // With an unreadable clipboard.json every image would look orphaned; keep them so the
+            // backup can still be recovered by hand.
+            if fileIsReadable { Self.deleteOrphanImages(in: storage.imagesDirectory, keeping: history.entries) }
+        }
 
         monitor.excludedBundleIDs = { [weak settings] in settings?.settings.clipboard.excludedBundleIDs ?? [] }
         monitor.onCapture = { [weak self] capture in self?.add(capture) }
@@ -94,9 +107,10 @@ import Combine
 
     func stop() {
         monitor.stop()
+        flushTrim()
         flushSave()
-        if !options.persist {
-            history.entries.forEach { ClipboardImageFiles.delete($0.content) }
+        if !options.persist, let storage {
+            history.entries.forEach { ClipboardImageFiles.delete($0.content, inside: storage.imagesDirectory) }
         }
     }
 
@@ -177,7 +191,7 @@ import Combine
 
     private func apply(_ clipboard: ClipboardSettings) {
         options = clipboard
-        apply(removed: history.setMaxEntries(clipboard.maxEntries), save: false)
+        scheduleTrim(to: clipboard.maxEntries)
         guard let storage else { return }
         if clipboard.persist {
             scheduleSave()
@@ -188,12 +202,37 @@ import Combine
         }
     }
 
+    /// A smaller `maxEntries` evicts for good, and the Settings slider reports every step while it
+    /// is dragged: going 200 → 20 → 200 must not throw entries away on the way. A larger limit
+    /// applies at once (nothing to lose); a smaller one once the value has settled.
+    private func scheduleTrim(to maxEntries: Int) {
+        pendingTrim?.cancel()
+        pendingTrim = nil
+        guard maxEntries < history.maxEntries else {
+            apply(removed: history.setMaxEntries(maxEntries), save: false)
+            return
+        }
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.flushTrim() }
+        }
+        pendingTrim = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.trimDelay, execute: work)
+    }
+
+    /// Applies a pending smaller `maxEntries` now (on quit, and for tests).
+    func flushTrim() {
+        pendingTrim?.cancel()
+        pendingTrim = nil
+        guard options.maxEntries != history.maxEntries else { return }
+        apply(removed: history.setMaxEntries(options.maxEntries))
+    }
+
     /// Forgets entries that left the history and deletes their files.
     private func apply(removed: [ClipboardEntry], save: Bool = true) {
         for entry in removed {
             memoryImages[entry.id] = nil
             thumbnailCache[entry.id] = nil
-            if storage != nil { ClipboardImageFiles.delete(entry.content) }
+            if let storage { ClipboardImageFiles.delete(entry.content, inside: storage.imagesDirectory) }
         }
         if save { scheduleSave() }
     }
@@ -293,13 +332,18 @@ import Combine
         }
     }
 
-    private static func load(from file: URL) -> [ClipboardEntry] {
+    /// The saved entries: [] when there is no file yet, nil when it exists but cannot be read (it
+    /// is then copied to `clipboard.json.corrompido`, since the next save replaces it).
+    private static func load(from file: URL) -> [ClipboardEntry]? {
         guard let data = try? Data(contentsOf: file) else { return [] }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         guard let contents = try? decoder.decode(LossyFileContents.self, from: data) else {
-            Log.clipboard.error("clipboard.json ilegível; histórico começa vazio")
-            return []
+            let backup = file.appendingPathExtension("corrompido")
+            try? FileManager.default.removeItem(at: backup)
+            try? FileManager.default.copyItem(at: file, to: backup)
+            Log.clipboard.error("clipboard.json ilegível; histórico começa vazio (cópia em clipboard.json.corrompido)")
+            return nil
         }
         // An image whose PNG was deleted behind our back cannot be pasted any more.
         return contents.entries.elements.filter { entry in
