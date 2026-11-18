@@ -22,8 +22,15 @@ struct LaunchOptions: Equatable {
     var snapshot: String?
     /// `--out <file.png>` for `--snapshot`.
     var snapshotOut: String?
-    /// `--scheme light|dark` for `--snapshot`.
-    var scheme: Scheme = .light
+    /// `--scheme light|dark`, when given. `--snapshot` defaults to light; with `--backdrop` it also
+    /// sets the running app's appearance, which otherwise follows the system.
+    var schemeOverride: Scheme?
+    /// `--backdrop`: a full-screen gradient window behind the panels, so screenshots of the running
+    /// app show nothing of the user's screen.
+    var backdrop = false
+
+    /// Scheme for `--snapshot`.
+    var scheme: Scheme { schemeOverride ?? .light }
 
     init() {}
 
@@ -48,7 +55,8 @@ struct LaunchOptions: Equatable {
         frameFile = value(for: "--frame-file")
         snapshot = value(for: "--snapshot")
         snapshotOut = value(for: "--out")
-        scheme = value(for: "--scheme").flatMap(Scheme.init(rawValue:)) ?? .light
+        schemeOverride = value(for: "--scheme").flatMap(Scheme.init(rawValue:))
+        backdrop = args.contains("--backdrop")
     }
 
     /// Anything that opens UI on launch (and therefore needs a frame file, if asked).
