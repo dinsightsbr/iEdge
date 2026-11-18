@@ -106,12 +106,29 @@ struct SettingsSliderRow: View {
         }
     }
 
-    @ViewBuilder private var slider: some View {
-        if let step {
-            Slider(value: $value, in: range, step: step) { Text(title) }.labelsHidden()
-        } else {
-            Slider(value: $value, in: range) { Text(title) }.labelsHidden()
-        }
+    /// A continuous slider whose value snaps to `step`: `Slider(step:)` on macOS draws one tick
+    /// mark per step (33 for "Tempo na borda", 57 for "Empurrão").
+    private var slider: some View {
+        Slider(value: snapped, in: range) { Text(title) }.labelsHidden()
+    }
+
+    private var snapped: Binding<Double> {
+        Binding(
+            get: { value },
+            set: { newValue in
+                let snappedValue = Self.snap(newValue, to: step, in: range)
+                if snappedValue != value { value = snappedValue }
+            }
+        )
+    }
+
+    /// `value` rounded to the nearest multiple of `step` from the range's start, kept in range.
+    static func snap(_ value: Double, to step: Double?, in range: ClosedRange<Double>) -> Double {
+        guard let step, step > 0 else { return value.clamped(to: range) }
+        let steps = ((value - range.lowerBound) / step).rounded()
+        // Rounded again so 1.6 stays 1.6 and not 1.6000000000000003.
+        let snappedValue = ((range.lowerBound + steps * step) * 1e6).rounded() / 1e6
+        return snappedValue.clamped(to: range)
     }
 }
 

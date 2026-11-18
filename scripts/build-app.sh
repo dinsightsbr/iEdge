@@ -20,6 +20,8 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/iEdge"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+# Redraw with: swift scripts/make-icon.swift
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 # Ad-hoc signature keeps a stable identity between builds, so the Screen Recording and

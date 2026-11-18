@@ -24,6 +24,10 @@ import SwiftUI
     private var lastClosedAt: Date = .distantPast
     /// Last height the SwiftUI content asked for; the panel hugs it, anchored to its top edge.
     private var contentHeight: CGFloat = 360
+    /// Keeps a sidebar opened from the menu or "Testar" on screen for `sidebarHold`.
+    private var holdTimer: Timer?
+
+    private static let sidebarHold: TimeInterval = 4
 
     private static let gapBelowMenuBar: CGFloat = 6
     private static let screenMargin: CGFloat = 8
@@ -128,11 +132,20 @@ import SwiftUI
         installClickMonitor()
     }
 
-    func closeSettings() {
+    func closeSettings(animated: Bool = true) {
         guard panel.isVisible else { return }
         removeClickMonitor()
         permissions.stopWatching()
         lastClosedAt = Date()
+        // The app and folder choosers activate iEdge. Left active with no window, it would keep
+        // the focus: the next ⌘V from the clipboard and the window capture would act on iEdge
+        // instead of the app the user is working in.
+        if NSApp.isActive { NSApp.deactivate() }
+        guard animated else {
+            panel.alphaValue = 0
+            panel.orderOut(nil)
+            return
+        }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.1
             context.timingFunction = CAMediaTimingFunction(name: .easeIn)
@@ -277,9 +290,34 @@ import SwiftUI
         // The menu closes on mouse-up; open on the next turn so that click does not close the bar.
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated {
-                self?.sidebar.show(edge: edge, on: screen, atY: screen.frame.midY)
+                guard let self else { return }
+                self.sidebar.show(edge: edge, on: screen, atY: screen.frame.midY)
+                self.holdSidebarOpen()
             }
         }
+    }
+
+    /// Opened from the menu or "Testar", the cursor is far from the bar (on the menu bar or in
+    /// Settings), and the bar closes 0.25 s after the cursor is more than 40 pt away: it would
+    /// spring in and straight out. Keep it a few seconds, then let it follow the cursor again.
+    private func holdSidebarOpen() {
+        if holdTimer == nil {
+            // `--pin` already keeps it open, for good.
+            guard !sidebar.isPinned else { return }
+            sidebar.isPinned = true
+        }
+        holdTimer?.invalidate()
+        let timer = Timer(timeInterval: Self.sidebarHold, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.releaseSidebarHold() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        holdTimer = timer
+    }
+
+    private func releaseSidebarHold() {
+        holdTimer?.invalidate()
+        holdTimer = nil
+        sidebar.isPinned = false
     }
 
     @objc private func openSettings() {

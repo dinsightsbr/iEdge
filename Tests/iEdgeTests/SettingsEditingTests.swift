@@ -209,4 +209,14 @@ final class SettingsEditingTests: XCTestCase {
         settings.paused = true
         XCTAssertEqual(SettingsSummary.text(for: settings, dockEdge: nil).text, "Pausado")
     }
+
+    func testSliderSnapsToStepWithoutTicks() {
+        XCTAssertEqual(SettingsSliderRow.snap(153.7, to: 10, in: 80...400), 150)
+        XCTAssertEqual(SettingsSliderRow.snap(156, to: 10, in: 80...400), 160)
+        XCTAssertEqual(SettingsSliderRow.snap(14.4, to: 1, in: 4...60), 14)
+        XCTAssertEqual(SettingsSliderRow.snap(1.63, to: 0.1, in: 1...2), 1.6)
+        XCTAssertEqual(SettingsSliderRow.snap(45.2, to: 2, in: 36...56), 46)
+        XCTAssertEqual(SettingsSliderRow.snap(999, to: 10, in: 80...400), 400)
+        XCTAssertEqual(SettingsSliderRow.snap(1.234, to: nil, in: 1...2), 1.234)
+    }
 }
