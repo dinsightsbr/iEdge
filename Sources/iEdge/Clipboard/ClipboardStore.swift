@@ -1,88 +1,324 @@
 import AppKit
+import ApplicationServices
+import Carbon.HIToolbox
 import Combine
 
-// Peça B: ClipboardMonitor (timer 0,5 s em changeCount, tipos ocultos/transitórios, apps excluídos,
-// limites de tamanho, ignorar as próprias cópias), dedup subindo para o topo, limite `maxEntries`
-// sem tirar fixadas, persistência em clipboard.json + clipboard/*.png quando `persist`, `copy`
-// completo (imagem e arquivos) com ⌘V via CGEvent ~120 ms depois quando `paste` e AXIsProcessTrusted.
-// Hoje: só memória; `copy` grava texto/URL no pasteboard; demo traz 8 entradas de exemplo.
-
-/// Clipboard history. Most recent first; the list view puts pinned entries on top.
+/// Clipboard history (docs/SPEC.md §1.3): `ClipboardMonitor` feeds `ClipboardHistory`; this class
+/// owns the files (clipboard.json and the PNGs in clipboard/), follows the clipboard settings and
+/// writes entries back to the pasteboard.
 @MainActor final class ClipboardStore: ObservableObject {
+    /// Most recent first; `sortedEntries` (and the list) put pinned entries on top.
     @Published private(set) var entries: [ClipboardEntry]
+
+    /// Where a real store keeps its data; nil in demo (memory only).
+    struct Storage {
+        var file: URL
+        var imagesDirectory: URL
+
+        static let standard = Storage(file: AppPaths.clipboardFile, imagesDirectory: AppPaths.clipboardImagesDirectory)
+    }
 
     private let settings: SettingsStore
     let isDemo: Bool
+    private let storage: Storage?
+    private var history: ClipboardHistory {
+        didSet { entries = history.entries }
+    }
+    private let monitor = ClipboardMonitor()
+    private var settingsObserver: AnyCancellable?
+    private var pendingSave: DispatchWorkItem?
     /// Images that exist only in memory (demo); real entries load from their PNG path.
     private var memoryImages: [UUID: NSImage] = [:]
+    /// The clipboard settings in effect. Kept here because `$settings` publishes before the new
+    /// value is stored in `settings.settings`.
+    private var options: ClipboardSettings
+    private var thumbnailCache: [UUID: NSImage] = [:]
 
-    init(settings: SettingsStore, demo: Bool) {
-        self.settings = settings
-        self.isDemo = demo
-        self.entries = []
+    static let saveDelay: TimeInterval = 0.5
+    static let pasteDelay: TimeInterval = 0.12
+
+    convenience init(settings: SettingsStore, demo: Bool) {
         if demo {
             let (entries, images) = Self.demoEntries()
-            self.entries = entries
-            self.memoryImages = images
+            self.init(settings: settings, storage: nil, entries: entries, images: images)
+        } else {
+            self.init(settings: settings, storage: .standard)
         }
     }
 
-    func start() {
-        Log.clipboard.info("ClipboardStore.start (ainda sem monitor)")
+    /// In-memory store with the given entries (snapshots and previews).
+    convenience init(settings: SettingsStore, previewEntries: [ClipboardEntry], images: [UUID: NSImage] = [:]) {
+        self.init(settings: settings, storage: nil, entries: previewEntries, images: images)
     }
 
-    func stop() {}
+    /// `storage` nil keeps everything in memory; otherwise loads `storage.file` when `persist` is on.
+    init(settings: SettingsStore, storage: Storage?, entries: [ClipboardEntry] = [], images: [UUID: NSImage] = [:]) {
+        self.settings = settings
+        self.storage = storage
+        self.isDemo = storage == nil
+        let clipboardSettings = settings.settings.clipboard
+        self.options = clipboardSettings
+        var initial = entries
+        if let storage {
+            initial = clipboardSettings.persist ? Self.load(from: storage.file) : []
+            if !clipboardSettings.persist { try? FileManager.default.removeItem(at: storage.file) }
+        }
+        var history = ClipboardHistory(entries: initial, maxEntries: clipboardSettings.maxEntries)
+        let evicted = history.setMaxEntries(clipboardSettings.maxEntries)
+        self.history = history
+        self.entries = history.entries
+        self.memoryImages = images
+        evicted.forEach { ClipboardImageFiles.delete($0.content) }
+        if let storage { Self.deleteOrphanImages(in: storage.imagesDirectory, keeping: history.entries) }
 
+        monitor.excludedBundleIDs = { [weak settings] in settings?.settings.clipboard.excludedBundleIDs ?? [] }
+        monitor.onCapture = { [weak self] capture in self?.add(capture) }
+        settingsObserver = settings.$settings
+            .map(\.clipboard)
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] new in
+                MainActor.assumeIsolated { self?.apply(new) }
+            }
+    }
+
+    var sortedEntries: [ClipboardEntry] { history.sorted }
+
+    // MARK: Contract
+
+    /// Starts watching the pasteboard. The demo store never does (it must not write images).
+    func start() {
+        guard !isDemo else { return }
+        monitor.start()
+    }
+
+    func stop() {
+        monitor.stop()
+        flushSave()
+        if !options.persist {
+            history.entries.forEach { ClipboardImageFiles.delete($0.content) }
+        }
+    }
+
+    /// Puts `entry` back on the pasteboard and, when `paste` and Accessibility is granted, sends ⌘V
+    /// to the frontmost app shortly after (the sidebar is closing meanwhile).
     func copy(_ entry: ClipboardEntry, paste: Bool) {
-        let pasteboard = NSPasteboard.general
-        switch entry.content {
-        case .text(let text):
-            pasteboard.clearContents()
-            pasteboard.setString(text, forType: .string)
-        case .url(let url):
-            pasteboard.clearContents()
-            pasteboard.setString(url, forType: .string)
-        case .image, .files:
-            Log.clipboard.info("copy de imagem/arquivos ainda não implementado")
+        guard write(entry, to: .general) else { return }
+        monitor.ignoreCurrentChange()
+        history.touch(id: entry.id)
+        scheduleSave()
+        guard paste else { return }
+        guard AXIsProcessTrusted() else {
+            Log.clipboard.info("colar automaticamente pedido sem Acessibilidade; só copiado")
             return
         }
-        moveToTop(entry)
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.pasteDelay) {
+            Self.sendPasteKeystroke()
+        }
     }
 
     func togglePin(_ entry: ClipboardEntry) {
-        guard let index = entries.firstIndex(where: { $0.id == entry.id }) else { return }
-        entries[index].pinned.toggle()
+        apply(removed: history.togglePin(id: entry.id))
     }
 
     func remove(_ entry: ClipboardEntry) {
-        entries.removeAll { $0.id == entry.id }
-        memoryImages[entry.id] = nil
+        if let removed = history.remove(id: entry.id) { apply(removed: [removed]) }
     }
 
-    /// Removes the entries that are not pinned.
+    /// Removes the entries that are not pinned, and their files.
     func clear() {
-        let removed = entries.filter { !$0.pinned }
-        entries.removeAll { !$0.pinned }
-        for entry in removed { memoryImages[entry.id] = nil }
+        apply(removed: history.clear())
     }
 
     /// Image to show for an image entry (thumbnail when there is one).
     func image(for entry: ClipboardEntry) -> NSImage? {
-        if let image = memoryImages[entry.id] { return image }
-        guard case let .image(path, thumbnailPath, _, _, _) = entry.content else { return nil }
-        return NSImage(contentsOfFile: thumbnailPath ?? path)
+        if let image = memoryImages[entry.id] ?? thumbnailCache[entry.id] { return image }
+        guard case let .image(path, thumbnailPath, _, _, _) = entry.content,
+              let image = NSImage(contentsOfFile: thumbnailPath ?? path) else { return nil }
+        thumbnailCache[entry.id] = image
+        return image
     }
 
-    private func moveToTop(_ entry: ClipboardEntry) {
-        guard let index = entries.firstIndex(where: { $0.id == entry.id }) else { return }
-        var moved = entries.remove(at: index)
-        moved.date = Date()
-        entries.insert(moved, at: 0)
+    // MARK: Capture
+
+    private func add(_ capture: ClipboardCapture) {
+        let base = ClipboardEntry(content: .text(""), date: capture.date, sourceBundleID: capture.sourceBundleID, sourceAppName: capture.sourceAppName)
+        switch capture.content {
+        case .text(let text): insert(base, content: .text(text))
+        case .url(let url): insert(base, content: .url(url))
+        case .files(let paths): insert(base, content: .files(paths))
+        case .image(let data):
+            guard let directory = storage?.imagesDirectory else { return }
+            let id = base.id
+            Task.detached(priority: .utility) {
+                do {
+                    let stored = try ClipboardImageFiles.store(data, id: id, in: directory)
+                    await MainActor.run {
+                        self.insert(base, content: .image(path: stored.path, thumbnailPath: stored.thumbnailPath, width: stored.width, height: stored.height, byteCount: stored.byteCount))
+                    }
+                } catch {
+                    Log.clipboard.error("falha ao gravar imagem do clipboard: \(error.localizedDescription, privacy: .public)")
+                }
+            }
+        }
+    }
+
+    private func insert(_ base: ClipboardEntry, content: ClipboardContent) {
+        var entry = base
+        entry.content = content
+        let dropped = history.insert(entry) { existing, new in
+            if case .image = new { return ClipboardImageFiles.sameImage(existing, new) }
+            return existing == new
+        }
+        apply(removed: dropped)
+    }
+
+    // MARK: Settings
+
+    private func apply(_ clipboard: ClipboardSettings) {
+        options = clipboard
+        apply(removed: history.setMaxEntries(clipboard.maxEntries), save: false)
+        guard let storage else { return }
+        if clipboard.persist {
+            scheduleSave()
+        } else {
+            pendingSave?.cancel()
+            pendingSave = nil
+            try? FileManager.default.removeItem(at: storage.file)
+        }
+    }
+
+    /// Forgets entries that left the history and deletes their files.
+    private func apply(removed: [ClipboardEntry], save: Bool = true) {
+        for entry in removed {
+            memoryImages[entry.id] = nil
+            thumbnailCache[entry.id] = nil
+            if storage != nil { ClipboardImageFiles.delete(entry.content) }
+        }
+        if save { scheduleSave() }
+    }
+
+    // MARK: Pasteboard
+
+    /// Writes an entry with the types other apps expect. False when there was nothing to write.
+    @discardableResult
+    func write(_ entry: ClipboardEntry, to pasteboard: NSPasteboard) -> Bool {
+        switch entry.content {
+        case .text(let text):
+            pasteboard.clearContents()
+            return pasteboard.setString(text, forType: .string)
+        case .url(let string):
+            pasteboard.clearContents()
+            let item = NSPasteboardItem()
+            if URL(string: string) != nil { item.setString(string, forType: .URL) }
+            item.setString(string, forType: .string)
+            return pasteboard.writeObjects([item])
+        case .files(let paths):
+            let urls = paths.map { URL(fileURLWithPath: $0) as NSURL }
+            guard !urls.isEmpty else { return false }
+            pasteboard.clearContents()
+            return pasteboard.writeObjects(urls)
+        case let .image(path, _, _, _, _):
+            if let image = memoryImages[entry.id] {
+                pasteboard.clearContents()
+                return pasteboard.writeObjects([image])
+            }
+            guard let png = FileManager.default.contents(atPath: path) else {
+                Log.clipboard.error("imagem do clipboard sumiu do disco")
+                return false
+            }
+            pasteboard.clearContents()
+            // TIFF too: many apps only read the legacy image type.
+            let item = NSPasteboardItem()
+            item.setData(png, forType: .png)
+            if let tiff = NSImage(data: png)?.tiffRepresentation { item.setData(tiff, forType: .tiff) }
+            return pasteboard.writeObjects([item])
+        }
+    }
+
+    private static func sendPasteKeystroke() {
+        let source = CGEventSource(stateID: .combinedSessionState)
+        let key = CGKeyCode(kVK_ANSI_V)
+        let down = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: true)
+        let up = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: false)
+        down?.flags = .maskCommand
+        up?.flags = .maskCommand
+        down?.post(tap: .cghidEventTap)
+        up?.post(tap: .cghidEventTap)
+    }
+
+    // MARK: Persistence
+
+    private struct FileContents: Codable {
+        var version = 1
+        var entries: [ClipboardEntry]
+    }
+
+    private struct LossyFileContents: Decodable {
+        var entries: LossyArray<ClipboardEntry>
+    }
+
+    private func scheduleSave() {
+        guard let storage, options.persist else { return }
+        pendingSave?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                self?.pendingSave = nil
+                self?.save(to: storage.file)
+            }
+        }
+        pendingSave = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.saveDelay, execute: work)
+    }
+
+    /// Writes a pending save now (on quit, and for tests).
+    func flushSave() {
+        guard let pendingSave, let storage else { return }
+        pendingSave.cancel()
+        self.pendingSave = nil
+        save(to: storage.file)
+    }
+
+    private func save(to file: URL) {
+        guard options.persist else { return }
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            encoder.dateEncodingStrategy = .iso8601
+            let data = try encoder.encode(FileContents(entries: history.entries))
+            try AppPaths.ensureDirectory(file.deletingLastPathComponent())
+            try data.write(to: file, options: .atomic)
+        } catch {
+            Log.clipboard.error("falha ao gravar clipboard.json: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private static func load(from file: URL) -> [ClipboardEntry] {
+        guard let data = try? Data(contentsOf: file) else { return [] }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let contents = try? decoder.decode(LossyFileContents.self, from: data) else {
+            Log.clipboard.error("clipboard.json ilegível; histórico começa vazio")
+            return []
+        }
+        // An image whose PNG was deleted behind our back cannot be pasted any more.
+        return contents.entries.elements.filter { entry in
+            guard case let .image(path, _, _, _, _) = entry.content else { return true }
+            return FileManager.default.fileExists(atPath: path)
+        }
+    }
+
+    private static func deleteOrphanImages(in directory: URL, keeping entries: [ClipboardEntry]) {
+        guard let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else { return }
+        let kept = Set(entries.flatMap { ClipboardImageFiles.paths(of: $0.content) }.map { URL(fileURLWithPath: $0).standardizedFileURL.path })
+        for file in files where !kept.contains(file.standardizedFileURL.path) {
+            try? FileManager.default.removeItem(at: file)
+        }
     }
 
     // MARK: Demo
 
-    private static func demoEntries() -> ([ClipboardEntry], [UUID: NSImage]) {
+    static func demoEntries() -> ([ClipboardEntry], [UUID: NSImage]) {
         let now = Date()
         func ago(_ minutes: Double) -> Date { now.addingTimeInterval(-minutes * 60) }
         let image = ClipboardEntry(
@@ -111,7 +347,7 @@ import Combine
         return (entries, [image.id: demoImage()])
     }
 
-    private static func demoImage() -> NSImage {
+    static func demoImage() -> NSImage {
         NSImage(size: NSSize(width: 160, height: 100), flipped: false) { rect in
             let gradient = NSGradient(colors: [.systemTeal, .systemIndigo])
             gradient?.draw(in: rect, angle: 35)
