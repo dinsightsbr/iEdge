@@ -41,6 +41,37 @@ final class LaunchOptionsTests: XCTestCase {
         XCTAssertEqual(parse("--snapshot list").snapshot, "list")
     }
 
+    func testSchemeDefaultsToLightOnlyForSnapshots() {
+        XCTAssertNil(parse("--demo").schemeOverride)
+        XCTAssertEqual(parse("--demo").scheme, .light)
+        XCTAssertEqual(parse("--scheme dark").schemeOverride, .dark)
+        XCTAssertNil(parse("--scheme sepia").schemeOverride)
+    }
+
+    func testBackdrop() {
+        XCTAssertFalse(parse("--demo").backdrop)
+        let options = parse("--demo --backdrop --scheme dark --show left --pin --flyout")
+        XCTAssertTrue(options.backdrop)
+        XCTAssertEqual(options.schemeOverride, .dark)
+        XCTAssertEqual(options.show, .left)
+        XCTAssertTrue(options.flyout)
+        // A flag right after --backdrop is still read as its own flag.
+        XCTAssertEqual(parse("--backdrop --settings bordas").settings, .bordas)
+    }
+
+    @MainActor
+    func testBackdropPalettes() {
+        let light = BackdropWindow.gradient(dark: false)
+        let dark = BackdropWindow.gradient(dark: true)
+        XCTAssertGreaterThanOrEqual(light.count, 2)
+        XCTAssertEqual(light.count, dark.count)
+        func luminance(_ c: (red: Double, green: Double, blue: Double)) -> Double {
+            0.2126 * c.red + 0.7152 * c.green + 0.0722 * c.blue
+        }
+        XCTAssertTrue(light.allSatisfy { luminance($0) > 0.7 })
+        XCTAssertTrue(dark.allSatisfy { luminance($0) < 0.3 })
+    }
+
     @MainActor
     func testSnapshotCatalogHasOneEntryPerPiece() {
         let names = SnapshotCatalog.all.map(\.name)

@@ -182,7 +182,7 @@ struct SettingsTextField: View {
 }
 
 /// Capsule button drawn in SwiftUI (renders the same in the app and in snapshots), in the
-/// faint fill of the iSessions header buttons. `prominent` uses the accent color.
+/// faint fill of the Control Center buttons. `prominent` uses the accent color.
 struct SettingsPillButton: View {
     enum Style { case normal, prominent, destructive }
 
@@ -230,7 +230,7 @@ struct SettingsPillButton: View {
     }
 }
 
-/// Round icon-only button (↑↓, edit, remove), like the header buttons of iSessions.
+/// Round icon-only button (↑↓, edit, remove), like the round buttons of Control Center.
 struct SettingsIconButton: View {
     let symbol: String
     var help: String

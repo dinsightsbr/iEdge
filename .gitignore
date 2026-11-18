@@ -1,8 +1,19 @@
+# macOS
 .DS_Store
+
+# SwiftPM and build output
 .build/
 build/
 .swiftpm/
 DerivedData/
 *.xcodeproj/
+*.xcuserstate
+xcuserdata/
+
+# Release artifacts built locally
+iEdge-*.zip
+iEdge-*.zip.sha256
+
+# Local working files
 _ref/
-.claude/worktrees/
+.claude/

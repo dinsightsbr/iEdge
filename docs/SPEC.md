@@ -6,14 +6,15 @@ App nativo do macOS (Swift + SwiftUI + AppKit, SwiftPM, sem Xcode project) que e
 vertical, como a do Dock); clicar executa. Os itens são capturas de tela, a área de transferência
 (clipboard) e atalhos que o usuário configura.
 
-Visual: o mesmo do **iSessions** (`~/iSessions`): vidro Liquid Glass no macOS 26
+Visual: a linguagem visual da **Central de Controle do macOS**: vidro Liquid Glass no macOS 26
 (`NSGlassEffectView`) e `NSVisualEffectView(.popover)` antes disso, cantos contínuos, faixas
-`primary.opacity(0.05)` sem borda, cores do sistema, SF Symbols, controles nativos, aparência da
-Central de Controle. Textos da interface em **pt-BR**. Código e comentários em inglês, como no iSessions.
+`primary.opacity(0.05)` sem borda, cores do sistema, SF Symbols, controles nativos. Textos da
+interface em **pt-BR**. Código e comentários em inglês.
 
 - macOS 14+ (`LSMinimumSystemVersion 14.0`), Swift 5 language mode, `swift-tools-version:5.9`.
+  Compila com o SDK do macOS 26 (Xcode 26+), por causa do Liquid Glass.
 - App de barra de menus: `LSUIElement`, `NSApp.setActivationPolicy(.accessory)`, sem Dock.
-- Bundle id `br.dinsights.iedge`, nome `iEdge`, copyright `© 2026 dinsights`.
+- Bundle id `br.dinsights.iedge`, nome `iEdge`, copyright `© 2026 Data Insights`, licença MIT.
 - Sem dependências externas. Sem rede.
 
 ---
@@ -45,8 +46,8 @@ Central de Controle. Textos da interface em **pt-BR**. Código e comentários em
   então colar e capturar funcionam nele), nível `.statusBar`, `collectionBehavior`
   `[.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]`, sem sombra de janela,
   `acceptsFirstMouse` no conteúdo.
-- Vidro como o `StatusPanel` do iSessions (janela maior que o vidro por margens, para a sombra do
-  vidro e para a ampliação vazarem sem corte).
+- Vidro num `GlassPanel` (janela maior que o vidro por margens, para a sombra do vidro e para a
+  ampliação vazarem sem corte).
 - Cápsula vertical flutuando **8 pt** afastada da borda, centrada na altura do cursor no disparo e
   presa dentro de `visibleFrame`. Raio 22, contínuo. Largura = tile + 2 × 10 pt.
 - Itens: **tiles circulares de 44 pt** (`tileSize`), fundo `primary.opacity(0.08)`, SF Symbol
@@ -127,7 +128,7 @@ Falha de execução vira um aviso curto (mesmo estilo da prévia), nunca um aler
 ### 1.6 Barra de menus e Ajustes
 
 - Ícone SF `sidebar.squares.left` na barra de menus. Clique esquerdo abre os **Ajustes** num painel
-  de vidro sob o ícone (o mesmo padrão do iSessions: `StatusPanel`, largura 400). Clique direito:
+  de vidro sob o ícone (como um módulo da Central de Controle: `GlassPanel`, largura 400). Clique direito:
   menu rápido com Pausar/Retomar, Mostrar barra esquerda, Mostrar barra direita, Ajustes…, Sair.
 - Abas (segmented nativo): **Itens · Bordas · Capturas · Clipboard · Geral**.
   - **Itens**: lista dos itens com ícone, nome, interruptor e reordenar (arrastar ou ↑↓);
@@ -198,7 +199,7 @@ Resources/Info.plist
 scripts/build-app.sh  scripts/run-dev.sh
 Sources/iEdge/
   App/        main.swift, AppDelegate.swift (liga tudo), LaunchOptions.swift (flags de dev)
-  Core/       Theme.swift, GlassPanel.swift (porta do StatusPanel), AppPaths.swift, Log.swift,
+  Core/       Theme.swift, GlassPanel.swift (painel de vidro), AppPaths.swift, Log.swift,
               Snapshot.swift (modo --snapshot)
   Models/     ScreenEdge, ActionKind, SidebarItem, AppSettings (+ ScreenshotSettings, ClipboardSettings),
               ClipboardEntry
@@ -272,6 +273,9 @@ struct ClipboardListView: View {                  // a peça A embute no flyout
   `--pin`: não fecha sozinha. `--hover 0.0…1.0`: simula o cursor nessa fração da altura da barra
   (para ver a lupa). `--flyout`: abre o clipboard junto.
 - `--settings [itens|bordas|capturas|clipboard|geral]`: abre os Ajustes nessa aba.
+- `--backdrop`: abre atrás dos painéis uma janela sem borda do tamanho da tela, com um gradiente
+  (claro ou escuro conforme `--scheme`; sem ele, o do sistema), sem clique, para as capturas do
+  app real não mostrarem nada da tela.
 - `--frame-file <path>`: grava o retângulo na tela dos painéis abertos (`x y w h` por linha, em
   coordenadas de `screencapture -R`, origem no canto superior esquerdo) 1.5 s depois de abrir.
 - `--snapshot <nome> --out <arquivo.png> [--scheme light|dark]`: renderiza uma view SwiftUI com
@@ -287,7 +291,7 @@ struct ClipboardListView: View {                  // a peça A embute no flyout
   borda (borda real × tela vizinha, cantos, Dock), lupa (escala, deslocamento, item selecionado),
   dedup/limite/fixadas do clipboard, nome do arquivo de captura, `AppSettings` (ida e volta e JSON antigo
   sem chaves novas).
-- Concorrência: tipos de UI em `@MainActor`; `main.swift` com `MainActor.assumeIsolated`, como no iSessions.
+- Concorrência: tipos de UI em `@MainActor`; `main.swift` com `MainActor.assumeIsolated`.
 - Sem `print` em produção: `Logger(subsystem: "br.dinsights.iedge", category: ...)`.
 - Nada de força-desembrulho em dado externo (pasteboard, JSON, `Process`).
 - Comentários só quando explicam o porquê.

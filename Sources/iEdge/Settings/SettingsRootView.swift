@@ -10,7 +10,7 @@ import SwiftUI
 }
 
 /// Content of the Settings glass panel: header with the overall state, the five tabs and the
-/// current tab. It reports its height so the panel can hug it, like the iSessions popover.
+/// current tab. It reports its height so the panel can hug it, like a Control Center module.
 struct SettingsRootView: View {
     @ObservedObject var settings: SettingsStore
     @ObservedObject var navigation: SettingsNavigation

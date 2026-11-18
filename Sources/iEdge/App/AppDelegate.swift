@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var sidebar: SidebarController?
     private var edgeMonitor: EdgeMonitor?
     private var statusController: StatusItemController?
+    private var backdrop: BackdropWindow?
 
     init(options: LaunchOptions) {
         self.options = options
@@ -54,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let sidebar, let statusController else { return }
         let options = options
         sidebar.isPinned = options.pin
+        if options.backdrop { showBackdrop() }
         guard options.opensUIAtLaunch else { return }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
@@ -80,6 +82,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+    }
+
+    /// `--backdrop [--scheme light|dark]`: ordered in now, before the panels open 0.5 s later, so
+    /// they stack above it. An explicit scheme also sets the app's appearance so the glass matches.
+    private func showBackdrop() {
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+        let dark: Bool
+        if let scheme = options.schemeOverride {
+            dark = scheme == .dark
+            NSApp.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        } else {
+            dark = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        }
+        let window = BackdropWindow(screen: screen, dark: dark)
+        window.orderFrontRegardless()
+        backdrop = window
     }
 
     func applicationWillTerminate(_ notification: Notification) {

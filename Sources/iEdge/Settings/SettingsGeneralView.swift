@@ -49,7 +49,7 @@ struct SettingsGeneralView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("iEdge \(Self.version)")
                         .font(.system(size: 12, weight: .medium))
-                    Text("© 2026 dinsights")
+                    Text("© 2026 Data Insights")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }

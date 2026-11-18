@@ -23,7 +23,7 @@ class GlassPanel: NSPanel {
         /// use the resting glass rectangle.
         var drawsGlass = true
 
-        /// Settings under the menu-bar icon (the iSessions StatusPanel).
+        /// Settings under the menu-bar icon, like a Control Center module.
         static let settings = Configuration(
             radius: Theme.panelRadius,
             margins: NSEdgeInsets(top: 0, left: 22, bottom: 30, right: 22)
