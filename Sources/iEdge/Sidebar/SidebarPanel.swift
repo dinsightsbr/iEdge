@@ -119,16 +119,34 @@ final class SidebarOverlayView: NSView {
 /// change, so AppKit's own layout of the view is not disturbed.
 @MainActor enum SidebarAnimation {
     /// Spring of the jump (docs/SPEC.md §1.2: response ≈ 0.38, damping ≈ 0.72).
-    static let response: Double = 0.38
-    static let damping: Double = 0.72
+    nonisolated static let response: Double = 0.38
+    nonisolated static let damping: Double = 0.72
     static let exitDuration: Double = 0.18
+    /// How far the sidebar passes its resting place before settling (docs/SPEC.md §1.2: ~6 pt).
+    static let entryOvershoot: CGFloat = 6
 
     /// SwiftUI spring with the same feel, for the tiles' cascade and the label.
     static var swiftUISpring: Animation { .spring(response: response, dampingFraction: damping) }
 
+    /// Damping ratio of a spring that, travelling `travel` points, passes the target by
+    /// `overshoot` points: an underdamped spring overshoots by `exp(-πζ / √(1 − ζ²))` of its travel.
+    /// With the sidebar's ~72 pt travel, damping 0.72 passes only ~3 pt (measured on screen
+    /// recordings); ~6 pt needs ζ ≈ 0.62.
+    static func damping(forOvershoot overshoot: CGFloat, travel: CGFloat) -> Double {
+        guard travel > 0, overshoot > 0, overshoot < travel else { return 1 }
+        let l = log(Double(overshoot / travel))
+        return -l / (Double.pi * Double.pi + l * l).squareRoot()
+    }
+
+    /// Fraction of the travel a spring of damping ratio `damping` passes the target by.
+    static func overshootFraction(damping: Double) -> Double {
+        guard damping < 1 else { return 0 }
+        return exp(-Double.pi * damping / (1 - damping * damping).squareRoot())
+    }
+
     /// Animates `view`'s layer from `offset` and `scale` around `pivot` (in the view's
-    /// coordinates) to rest, with a spring, fading in.
-    static func springIn(_ view: NSView, pivot: CGPoint, offset: CGVector, scale: CGFloat) {
+    /// coordinates) to rest, with a spring of `response` and `damping`, fading in.
+    static func springIn(_ view: NSView, pivot: CGPoint, offset: CGVector, scale: CGFloat, damping: Double = damping) {
         guard let layer = view.layer else { return }
         layer.removeAllAnimations()
         let from = transform(layer: layer, pivot: pivot, offset: offset, scale: scale)

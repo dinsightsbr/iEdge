@@ -74,7 +74,14 @@ struct SidebarView: View {
                         x: edge == .left ? inner + Theme.sidebarLabelMaxWidth / 2 : inner - Theme.sidebarLabelMaxWidth / 2,
                         y: origin.y + tile.centerY
                     )
+                    // Enters with its tile's cascade instead of showing before the tiles do.
                     .opacity(model.presented ? 1 : 0)
+                    .animation(
+                        model.animatesCascade
+                            ? SidebarAnimation.swiftUISpring.delay(Double(abs(selected - model.cascadeOrigin)) * 0.015 + 0.06)
+                            : nil,
+                        value: model.presented
+                    )
                     .allowsHitTesting(false)
             }
         }
