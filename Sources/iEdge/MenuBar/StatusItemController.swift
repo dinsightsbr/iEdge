@@ -4,7 +4,7 @@ import SwiftUI
 
 /// Owns the menu-bar icon: left click toggles Settings in a glass panel under it, right click
 /// shows the quick menu. The panel hugs the height of its content and closes on Esc, on a click
-/// elsewhere and when another app takes focus, as in iSessions.
+/// elsewhere and when another app takes focus, like a Control Center module.
 @MainActor final class StatusItemController: NSObject, NSWindowDelegate {
     private let settings: SettingsStore
     private let sidebar: SidebarController
