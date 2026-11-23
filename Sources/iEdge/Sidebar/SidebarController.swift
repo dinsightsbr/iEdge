@@ -375,7 +375,19 @@ import SwiftUI
     // MARK: Geometry
 
     private func panel(for edge: ScreenEdge) -> SidebarPanel {
-        if let panel = panels[edge] { return panel }
+        if let panel = panels[edge] {
+            // Off screen, `isOnActiveSpace` tells whether ordering the window in would put it on
+            // the active Space.
+            if panel.isOnActiveSpace { return panel }
+            // The window server can drop a long-lived panel from the full-screen Spaces that
+            // already exist (seen after days running, across sleep and display changes; Spaces
+            // created later still take it in). Ordered in there it stays off screen while AppKit
+            // calls it visible: the trackpad taps, nothing shows. Re-applying the collection
+            // behaviour does not bring it back; a new window joins every Space.
+            panel.orderOut(nil)
+            panels[edge] = nil
+            Log.sidebar.notice("painel da borda \(edge.rawValue, privacy: .public) fora do Space ativo: recriado")
+        }
         let overlay = SidebarOverlayView(rootView: SidebarView(settings: settings, model: model))
         let panel = SidebarPanel(edge: edge, overlay: overlay)
         panel.onDismiss = { [weak self] in self?.dismissIfNotPinned() }
