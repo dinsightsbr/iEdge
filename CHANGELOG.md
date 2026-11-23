@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-23
+
 ### Fixed
 
 - After running for a while, the sidebar could open off screen over apps that were already in
@@ -36,5 +38,6 @@ First public release.
 - Development flags for inspecting the app: `--demo`, `--show`, `--pin`, `--hover`, `--flyout`,
   `--settings`, `--frame-file`, `--snapshot`, `--scheme` and `--backdrop`.
 
-[Unreleased]: https://github.com/dinsightsbr/iEdge/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/dinsightsbr/iEdge/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/dinsightsbr/iEdge/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/dinsightsbr/iEdge/releases/tag/v0.1.0
