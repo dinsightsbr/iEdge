@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- After running for a while, the sidebar could open off screen over apps that were already in
+  full screen: the trackpad tapped but nothing showed until the app left and re-entered full
+  screen. A sidebar window that is no longer on the active Space is now replaced before opening.
+
 ## [0.1.0] - 2026-11-18
 
 First public release.
